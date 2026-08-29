@@ -9,6 +9,7 @@ import (
 
 	"dnscheck/internal/config"
 	"dnscheck/internal/dnsclient"
+	"dnscheck/internal/geo"
 )
 
 func testConfig() *config.Config {
@@ -70,8 +71,8 @@ func TestInitAutoStartEndToEnd(t *testing.T) {
 	}
 	m2, runCmd := m.Update(msg)
 	mm := m2.(Model)
-	if !mm.page1Running || mm.runID != 1 {
-		t.Fatalf("after start msg: running=%v runID=%d, want true/1", mm.page1Running, mm.runID)
+	if !mm.page1Running || mm.run1ID != 1 {
+		t.Fatalf("after start msg: running=%v run1ID=%d, want true/1", mm.page1Running, mm.run1ID)
 	}
 
 	done := runCmd()
@@ -187,8 +188,8 @@ func TestStartProbeState(t *testing.T) {
 	if !s.model.page1Running {
 		t.Error("startProbe should set running")
 	}
-	if s.model.runID != m.runID+1 {
-		t.Errorf("runID = %d, want %d", s.model.runID, m.runID+1)
+	if s.model.run1ID != m.run1ID+1 {
+		t.Errorf("runID = %d, want %d", s.model.run1ID, m.run1ID+1)
 	}
 	if s.cmd == nil {
 		t.Fatal("startProbe should return a command")
@@ -211,7 +212,7 @@ func TestStartProbeState(t *testing.T) {
 	if m2.(Model).page1Running {
 		t.Error("probeDoneMsg should clear running")
 	}
-	if m2.(Model).runID != done.runID {
+	if m2.(Model).run1ID != done.runID {
 		t.Error("runID mismatch")
 	}
 }
@@ -219,7 +220,7 @@ func TestStartProbeState(t *testing.T) {
 func TestStaleRunDiscarded(t *testing.T) {
 	m := New(testConfig())
 	s := m.startProbe()
-	m2, _ := s.model.Update(probeDoneMsg{runID: s.model.runID - 1, results: fakeResults()})
+	m2, _ := s.model.Update(probeDoneMsg{runID: s.model.run1ID - 1, results: fakeResults()})
 	if len(m2.(Model).page1Results) != 0 {
 		t.Error("stale run results must be discarded")
 	}
@@ -271,12 +272,172 @@ func TestViewNoResultsPlaceholder(t *testing.T) {
 	}
 }
 
-func TestViewPage2Placeholder(t *testing.T) {
+func fakePage2() ([]dnsclient.DomainResult, map[string]geo.Info) {
+	mkSrv := func(name string, proto config.Protocol) config.DNSServer {
+		return config.DNSServer{Name: name, Address: "127.0.0.1:53", Protocol: proto}
+	}
+	results := []dnsclient.DomainResult{
+		{
+			Domain: "probe.example",
+			Entries: []dnsclient.ResolveResult{
+				{Server: mkSrv("Mock One", config.ProtocolUDP), Domain: "probe.example",
+					AStatus: dnsclient.StatusNOERROR, AAAAStatus: dnsclient.StatusNOERROR,
+					A: []string{"93.184.216.34"}},
+				{Server: mkSrv("Mock Two", config.ProtocolTCP), Domain: "probe.example",
+					AStatus: dnsclient.StatusTIMEOUT, AAAAStatus: dnsclient.StatusTIMEOUT},
+			},
+		},
+		{
+			Domain: "other.example",
+			Entries: []dnsclient.ResolveResult{
+				{Server: mkSrv("Mock One", config.ProtocolUDP), Domain: "other.example",
+					AStatus: dnsclient.StatusNOERROR, AAAAStatus: dnsclient.StatusNOERROR},
+			},
+		},
+	}
+	geoInfos := map[string]geo.Info{
+		"93.184.216.34": {IP: "93.184.216.34", Country: "United States", CountryCode: "US", City: "Mountain View", ISP: "Google LLC"},
+	}
+	return results, geoInfos
+}
+
+func TestViewPage2(t *testing.T) {
 	m := New(testConfig())
 	m.tab = TabGeo
+	m.width = 120
+	m.page2Results, m.page2Geo = fakePage2()
 	out := stripAnsi(m.View())
-	if !strings.Contains(out, "域名解析与 IP Geo") || !strings.Contains(out, "probe.example") {
-		t.Errorf("geo placeholder view: %s", out)
+
+	for _, want := range []string{
+		"域名解析与 IP Geo",
+		"ip-api.com",
+		"域名: probe.example",
+		"域名: other.example",
+		"93.184.216.34",
+		"United States · Mountain View",
+		"Google LLC",
+		"N/A (TIMEOUT)",
+		"N/A (No Answer)",
+		"[Q] 退出程序",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("View missing %q", want)
+		}
+	}
+}
+
+func TestViewPage2Running(t *testing.T) {
+	m := New(testConfig())
+	m.tab = TabGeo
+	m.page2Running = true
+	out := stripAnsi(m.View())
+	if !strings.Contains(out, "正在解析域名并查询 IP 地理位置") {
+		t.Errorf("running view: %s", out)
+	}
+}
+
+func TestPage2AutoStartOnTabEnter(t *testing.T) {
+	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+	m2, cmd := m.Update(keyMsg("tab"))
+	mm := m2.(Model)
+	if mm.tab != TabGeo || !mm.page2Running || !mm.page2EverRan {
+		t.Fatalf("tab enter: tab=%d running=%v everRan=%v", mm.tab, mm.page2Running, mm.page2EverRan)
+	}
+	msg := cmd()
+	d, ok := msg.(page2DoneMsg)
+	if !ok {
+		t.Fatalf("cmd returned %T, want page2DoneMsg", msg)
+	}
+	if d.runID != 1 {
+		t.Errorf("runID = %d, want 1", d.runID)
+	}
+	m3, _ := mm.Update(d)
+	mmm := m3.(Model)
+	if mmm.page2Running {
+		t.Error("page2 completion should clear running")
+	}
+	if len(mmm.page2Results) != len(mmm.cfg.Domains) {
+		t.Fatalf("results = %d domains, want %d", len(mmm.page2Results), len(mmm.cfg.Domains))
+	}
+}
+
+func TestPage2SecondTabEnterDoesNotRestart(t *testing.T) {
+	m := New(testConfig())
+	m2, _ := m.Update(keyMsg("tab"))
+	mm := m2.(Model)
+	mm.page2Running = false
+	mm.page2Results, _ = fakePage2()
+
+	m3, cmd2 := mm.Update(keyMsg("tab"))
+	mm3 := m3.(Model)
+	if mm3.tab != TabDNS {
+		t.Fatalf("tab = %d", mm3.tab)
+	}
+	m4, cmd3 := mm3.Update(keyMsg("tab"))
+	mm4 := m4.(Model)
+	if mm4.page2Running || cmd3 != nil {
+		t.Error("re-entering Page 2 with existing results must not re-trigger")
+	}
+	_ = cmd2
+}
+
+func TestPageIndependentRunIDs(t *testing.T) {
+	m := New(testConfig())
+	s1 := m.startProbe()
+	s2 := s1.model.startResolve()
+	m2, _ := s2.model.Update(probeDoneMsg{runID: s1.model.run1ID, results: fakeResults()})
+	m3, _ := m2.Update(page2DoneMsg{runID: s2.model.run2ID, results: nil, geo: nil})
+	mm := m3.(Model)
+	if len(mm.page1Results) == 0 {
+		t.Error("page1 results must be accepted while page2 runs")
+	}
+	if mm.page2Running {
+		t.Error("page2 done must clear page2 running")
+	}
+}
+
+func TestRestartActivePerPage(t *testing.T) {
+	m := New(testConfig())
+	s := m.startResolve()
+	mm := s.model
+	mm.tab = TabGeo
+	mm.page2Running = false
+
+	m2, cmd := mm.Update(keyMsg("R"))
+	if !m2.(Model).page2Running || cmd == nil {
+		t.Error("R on Page 2 should restart resolve test")
+	}
+	if m2.(Model).run2ID != s.model.run2ID+1 {
+		t.Errorf("run2ID = %d, want %d", m2.(Model).run2ID, s.model.run2ID+1)
+	}
+
+	m3, cmd2 := mm.Update(keyMsg("S"))
+	if !m3.(Model).page2Running || cmd2 == nil {
+		t.Error("S on stopped Page 2 should start it")
+	}
+}
+
+func TestStopDiscardsLateResults(t *testing.T) {
+	m := New(testConfig())
+	s := m.startProbe()
+	m2, _ := s.model.Update(keyMsg("s"))
+	mm := m2.(Model)
+	if mm.page1Running {
+		t.Fatal("probe should be stopped")
+	}
+	m3, _ := mm.Update(probeDoneMsg{runID: s.model.run1ID, results: fakeResults()})
+	if len(m3.(Model).page1Results) != 0 {
+		t.Error("late results from a stopped run must be discarded")
+	}
+
+	s2 := m.startResolve()
+	s2.model.tab = TabGeo
+	m4, _ := s2.model.Update(keyMsg("s"))
+	mm4 := m4.(Model)
+	m5, _ := mm4.Update(page2DoneMsg{runID: s2.model.run2ID, results: nil, geo: nil})
+	if len(m5.(Model).page2Results) != 0 {
+		t.Error("late page2 results from a stopped run must be discarded")
 	}
 }
 
@@ -299,7 +460,7 @@ func TestViewResizeAdaptive(t *testing.T) {
 			t.Errorf("View empty at %v", size)
 		}
 		for line := range strings.SplitSeq(out, "\n") {
-			if visible := visibleWidth(line); size.Width >= 60 && visible > size.Width {
+			if visible := visibleWidth(line); visible > size.Width {
 				t.Errorf("line width %d exceeds terminal %d at resize: %q", visible, size.Width, line)
 			}
 		}
