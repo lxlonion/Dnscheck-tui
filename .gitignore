@@ -1,4 +1,4 @@
-dnscheck
-dnscheck-*
+/dnscheck
+/dnscheck-*
 /dist/
 .DS_Store
