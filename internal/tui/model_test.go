@@ -522,6 +522,21 @@ func TestRerunDoesNotDisturbOtherPage(t *testing.T) {
 	_ = cmd3()
 }
 
+func TestNumberKeysSwitchTabs(t *testing.T) {
+	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+
+	m2, cmd := m.Update(keyMsg("2"))
+	mm := m2.(Model)
+	if mm.tab != TabGeo || !mm.page2Running || cmd == nil {
+		t.Error("key 2 should jump to Page 2 and auto-start it on first entry")
+	}
+	m3, _ := mm.Update(keyMsg("1"))
+	if m3.(Model).tab != TabDNS {
+		t.Error("key 1 should jump back to Page 1")
+	}
+}
+
 func TestStopDiscardsLateResults(t *testing.T) {
 	m := New(testConfig())
 	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")

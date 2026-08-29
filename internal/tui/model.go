@@ -170,17 +170,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "tab", "shift+tab":
-			m.tab = (m.tab + 1) % 2
-			if m.tab == TabGeo && !m.page2EverRan {
-				s := m.startResolve()
-				return s.model, s.cmd
-			}
-			return m, nil
+			return m.switchTab((m.tab + 1) % 2)
+		case "1":
+			return m.switchTab(TabDNS)
+		case "2":
+			return m.switchTab(TabGeo)
 		case "r", "R":
 			return m.restartActive()
 		case "s", "S":
 			return m.toggleActive()
 		}
+	}
+	return m, nil
+}
+
+func (m Model) switchTab(t int) (tea.Model, tea.Cmd) {
+	m.tab = t
+	if m.tab == TabGeo && !m.page2EverRan {
+		s := m.startResolve()
+		return s.model, s.cmd
 	}
 	return m, nil
 }
