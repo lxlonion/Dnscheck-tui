@@ -5,7 +5,9 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/url"
 	"os"
@@ -59,6 +61,37 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("invalid config %s: %w", path, err)
 	}
 	return &c, nil
+}
+
+// DefaultConfigJSON is the built-in configuration written when the config
+// file is missing.
+const DefaultConfigJSON = `{
+  "timeout_ms": 2000,
+  "dns_servers": [
+    { "name": "Google UDP", "address": "8.8.8.8:53", "protocol": "udp" },
+    { "name": "Google TCP", "address": "8.8.8.8:53", "protocol": "tcp" },
+    { "name": "Cloudflare DoT", "address": "1.1.1.1:853", "protocol": "dot" },
+    { "name": "Google DoH", "address": "https://dns.google/dns-query", "protocol": "doh" },
+    { "name": "Google IPv6 UDP", "address": "[2001:4860:4860::8888]:53", "protocol": "udp" }
+  ],
+  "domains": ["google.com", "github.com"]
+}
+`
+
+// WriteDefault writes the built-in default configuration to path.
+func WriteDefault(path string) error {
+	return os.WriteFile(path, []byte(DefaultConfigJSON), 0o644)
+}
+
+// LoadOrCreate loads the configuration from path; when the file does not
+// exist, a default config is created there first and then loaded.
+func LoadOrCreate(path string) (*Config, error) {
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		if err := WriteDefault(path); err != nil {
+			return nil, fmt.Errorf("write default config: %w", err)
+		}
+	}
+	return Load(path)
 }
 
 // Validate checks the configuration and fills in defaults (timeout_ms).

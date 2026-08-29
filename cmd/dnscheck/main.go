@@ -15,7 +15,7 @@ func main() {
 	cfgPath := flag.String("config", "config.json", "path to JSON config file")
 	flag.Parse()
 
-	cfg, err := config.Load(*cfgPath)
+	cfg, err := config.LoadOrCreate(*cfgPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "dnscheck:", err)
 		os.Exit(1)

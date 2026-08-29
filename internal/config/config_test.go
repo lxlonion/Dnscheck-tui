@@ -68,6 +68,76 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
+func TestLoadOrCreateCreatesDefault(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	c, err := LoadOrCreate(p)
+	if err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("default config not created: %v", err)
+	}
+	if len(raw) == 0 {
+		t.Fatal("default config file is empty")
+	}
+	if c.TimeoutMs != DefaultTimeoutMs {
+		t.Errorf("TimeoutMs = %d, want %d", c.TimeoutMs, DefaultTimeoutMs)
+	}
+	if len(c.DNSServers) == 0 || len(c.Domains) == 0 {
+		t.Errorf("default config incomplete: %d servers, %d domains", len(c.DNSServers), len(c.Domains))
+	}
+	for _, want := range []Protocol{ProtocolUDP, ProtocolTCP, ProtocolDoT, ProtocolDoH} {
+		found := false
+		for _, s := range c.DNSServers {
+			if s.Protocol == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("default config missing %q server", want)
+		}
+	}
+}
+
+func TestLoadOrCreateKeepsExistingFile(t *testing.T) {
+	p := writeTemp(t, `{"timeout_ms": 1234, "dns_servers": [{"name": "X", "address": "8.8.8.8:53", "protocol": "udp"}], "domains": ["a.com"]}`)
+	before, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadOrCreate(p)
+	if err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+	if c.TimeoutMs != 1234 {
+		t.Errorf("existing config was overwritten: TimeoutMs = %d", c.TimeoutMs)
+	}
+	after, _ := os.ReadFile(p)
+	if string(before) != string(after) {
+		t.Error("existing config file must not be modified")
+	}
+}
+
+func TestLoadOrCreateWriteError(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "missing-dir", "config.json")
+	_, err := LoadOrCreate(p)
+	if err == nil || !strings.Contains(err.Error(), "write default config") {
+		t.Errorf("err = %v, want write default config failure", err)
+	}
+}
+
+func TestWriteDefaultProducesValidConfig(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := WriteDefault(p); err != nil {
+		t.Fatalf("WriteDefault: %v", err)
+	}
+	if _, err := Load(p); err != nil {
+		t.Errorf("default template must be valid: %v", err)
+	}
+}
+
 func TestLoadInvalid(t *testing.T) {
 	const oneServer = `"dns_servers": [{"name": "G", "address": "8.8.8.8:53", "protocol": "udp"}]`
 	cases := []struct {
