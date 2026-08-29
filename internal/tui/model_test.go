@@ -364,6 +364,7 @@ func TestPage2AutoStartOnTabEnter(t *testing.T) {
 
 func TestPage2SecondTabEnterDoesNotRestart(t *testing.T) {
 	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
 	m2, _ := m.Update(keyMsg("tab"))
 	mm := m2.(Model)
 	mm.page2Running = false
@@ -384,6 +385,7 @@ func TestPage2SecondTabEnterDoesNotRestart(t *testing.T) {
 
 func TestPageIndependentRunIDs(t *testing.T) {
 	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
 	s1 := m.startProbe()
 	s2 := s1.model.startResolve()
 	m2, _ := s2.model.Update(probeDoneMsg{runID: s1.model.run1ID, results: fakeResults()})
@@ -399,6 +401,7 @@ func TestPageIndependentRunIDs(t *testing.T) {
 
 func TestRestartActivePerPage(t *testing.T) {
 	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
 	s := m.startResolve()
 	mm := s.model
 	mm.tab = TabGeo
@@ -418,8 +421,110 @@ func TestRestartActivePerPage(t *testing.T) {
 	}
 }
 
+func TestBothPagesRunConcurrently(t *testing.T) {
+	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+
+	m1, cmd1 := m.Update(probeStartMsg{})
+	m2, cmd2 := m1.Update(keyMsg("tab"))
+	mm := m2.(Model)
+	if !mm.page1Running || !mm.page2Running {
+		t.Fatalf("combined mode: page1 running=%v, page2 running=%v, want both true", mm.page1Running, mm.page2Running)
+	}
+
+	d1, ok1 := cmd1().(probeDoneMsg)
+	d2, ok2 := cmd2().(page2DoneMsg)
+	if !ok1 || !ok2 {
+		t.Fatalf("cmd types: %T / %T", cmd1(), cmd2())
+	}
+	m3, _ := mm.Update(d1)
+	m4, _ := m3.Update(d2)
+	f := m4.(Model)
+	if f.page1Running || f.page2Running {
+		t.Error("both pages should be finished")
+	}
+	if len(f.page1Results) == 0 {
+		t.Error("page 1 must have results in combined mode")
+	}
+	if len(f.page2Results) != len(f.cfg.Domains) {
+		t.Errorf("page 2 results = %d domains, want %d", len(f.page2Results), len(f.cfg.Domains))
+	}
+}
+
+func TestPage2OnlyModeWithoutPage1(t *testing.T) {
+	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+
+	m1, _ := m.Update(probeStartMsg{})
+	m1s, _ := m1.Update(keyMsg("s"))
+	stopped := m1s.(Model)
+	if stopped.page1Running {
+		t.Fatal("page 1 should be stopped")
+	}
+
+	m2, cmd2 := stopped.Update(keyMsg("tab"))
+	mm := m2.(Model)
+	if !mm.page2Running {
+		t.Fatal("page 2 must run even though page 1 never completed (no dependency)")
+	}
+	d2, ok := cmd2().(page2DoneMsg)
+	if !ok {
+		t.Fatalf("cmd returned %T", cmd2())
+	}
+	m3, _ := mm.Update(d2)
+	f := m3.(Model)
+	if len(f.page2Results) != len(f.cfg.Domains) {
+		t.Errorf("page 2 results = %d domains, want %d", len(f.page2Results), len(f.cfg.Domains))
+	}
+}
+
+func TestPage1OnlyModeNeverTriggersPage2(t *testing.T) {
+	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+
+	m1, cmd1 := m.Update(probeStartMsg{})
+	d1 := cmd1().(probeDoneMsg)
+	m2, _ := m1.Update(d1)
+	f := m2.(Model)
+	if f.page2EverRan {
+		t.Error("staying on Page 1 must never trigger the Page 2 test")
+	}
+	if len(f.page1Results) == 0 {
+		t.Error("page 1 must have results")
+	}
+}
+
+func TestRerunDoesNotDisturbOtherPage(t *testing.T) {
+	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+
+	m1, _ := m.Update(probeStartMsg{})
+	m2, _ := m1.Update(keyMsg("tab"))
+	mm := m2.(Model)
+	if !mm.page1Running || !mm.page2Running {
+		t.Fatal("precondition: both pages running")
+	}
+
+	m3, cmd3 := mm.Update(keyMsg("R"))
+	f := m3.(Model)
+	if !f.page2Running || cmd3 == nil {
+		t.Fatal("R should restart the running Page 2 test")
+	}
+	if f.run2ID != mm.run2ID+1 {
+		t.Errorf("run2ID = %d, want %d", f.run2ID, mm.run2ID+1)
+	}
+	if !f.page1Running {
+		t.Error("page 1 must keep running after Page 2 rerun")
+	}
+	if f.run1ID != mm.run1ID {
+		t.Error("page 1 runID must be untouched")
+	}
+	_ = cmd3()
+}
+
 func TestStopDiscardsLateResults(t *testing.T) {
 	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
 	s := m.startProbe()
 	m2, _ := s.model.Update(keyMsg("s"))
 	mm := m2.(Model)
