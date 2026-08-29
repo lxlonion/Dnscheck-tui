@@ -1,0 +1,11 @@
+{
+  "timeout_ms": 2000,
+  "dns_servers": [
+    { "name": "Google UDP", "address": "8.8.8.8:53", "protocol": "udp" },
+    { "name": "Google TCP", "address": "8.8.8.8:53", "protocol": "tcp" },
+    { "name": "Cloudflare DoT", "address": "1.1.1.1:853", "protocol": "dot" },
+    { "name": "Google DoH", "address": "https://dns.google/dns-query", "protocol": "doh" },
+    { "name": "Google IPv6 UDP", "address": "[2001:4860:4860::8888]:53", "protocol": "udp" }
+  ],
+  "domains": ["google.com", "github.com"]
+}

@@ -1,0 +1,4 @@
+dnscheck
+dnscheck-*
+/dist/
+.DS_Store
