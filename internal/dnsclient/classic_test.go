@@ -294,16 +294,13 @@ func TestProbeAllConcurrent(t *testing.T) {
 }
 
 func TestNewResolverFactory(t *testing.T) {
-	if _, err := NewResolver(config.ProtocolUDP); err != nil {
-		t.Errorf("udp: %v", err)
-	}
-	if _, err := NewResolver(config.ProtocolTCP); err != nil {
-		t.Errorf("tcp: %v", err)
-	}
-	for _, p := range []config.Protocol{config.ProtocolDoT, config.ProtocolDoH, config.Protocol("icmp")} {
-		if _, err := NewResolver(p); err == nil {
-			t.Errorf("protocol %q should be unsupported until Phase 4", p)
+	for _, p := range []config.Protocol{config.ProtocolUDP, config.ProtocolTCP, config.ProtocolDoT, config.ProtocolDoH} {
+		if _, err := NewResolver(p); err != nil {
+			t.Errorf("protocol %q: %v", p, err)
 		}
+	}
+	if _, err := NewResolver(config.Protocol("icmp")); err == nil {
+		t.Error("unknown protocol should be rejected")
 	}
 }
 

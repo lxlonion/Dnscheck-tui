@@ -2,6 +2,7 @@ package dnsclient
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
 	"time"
@@ -11,10 +12,13 @@ import (
 	"dnscheck/internal/config"
 )
 
-// classicResolver exchanges DNS messages over plain UDP or TCP (port 53 style
-// transports) using github.com/miekg/dns.
+// classicResolver exchanges DNS messages over plain UDP, plain TCP or
+// DNS-over-TLS ("tcp-tls") using github.com/miekg/dns. TLS verification is
+// strict by default: tlsConfig stays nil in production so the system root
+// store and normal certificate verification apply.
 type classicResolver struct {
-	net string
+	net       string
+	tlsConfig *tls.Config
 }
 
 func (r *classicResolver) Exchange(ctx context.Context, server config.DNSServer, question string, qtype uint16) Result {
@@ -22,36 +26,19 @@ func (r *classicResolver) Exchange(ctx context.Context, server config.DNSServer,
 	m.SetQuestion(dns.Fqdn(question), qtype)
 	m.RecursionDesired = true
 
-	c := &dns.Client{Net: r.net}
+	c := &dns.Client{Net: r.net, TLSConfig: r.tlsConfig}
 	res := Result{ServerName: server.Name, Protocol: server.Protocol}
 
 	start := time.Now()
 	resp, _, err := c.ExchangeContext(ctx, m, server.Address)
 	res.RTT = time.Since(start)
 	if err != nil {
-		res.Status = StatusERROR
-		res.Detail = err.Error()
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) || isTimeoutErr(err) {
-			res.Status = StatusTIMEOUT
-			res.Detail = ""
-		}
+		res.Status, res.Detail = classifyTransportError(ctx, err)
 		return res
 	}
 
-	res.Status = Status(dns.RcodeToString[resp.Rcode])
+	res.Status, res.IPs = classifyReply(resp, qtype)
 	res.Truncated = resp.Truncated
-	for _, rr := range resp.Answer {
-		switch v := rr.(type) {
-		case *dns.A:
-			if qtype == dns.TypeA {
-				res.IPs = append(res.IPs, v.A.String())
-			}
-		case *dns.AAAA:
-			if qtype == dns.TypeAAAA {
-				res.IPs = append(res.IPs, v.AAAA.String())
-			}
-		}
-	}
 	return res
 }
 

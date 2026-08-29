@@ -4,8 +4,11 @@ package dnsclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/miekg/dns"
 
 	"dnscheck/internal/config"
 )
@@ -56,7 +59,39 @@ func NewResolver(p config.Protocol) (Resolver, error) {
 		return &classicResolver{net: "udp"}, nil
 	case config.ProtocolTCP:
 		return &classicResolver{net: "tcp"}, nil
+	case config.ProtocolDoT:
+		return &classicResolver{net: "tcp-tls"}, nil
+	case config.ProtocolDoH:
+		return newDoHResolver(), nil
 	default:
 		return nil, fmt.Errorf("unsupported protocol %q", p)
 	}
+}
+
+// classifyReply maps a DNS response message to a Status and the answer IPs
+// matching the queried type.
+func classifyReply(reply *dns.Msg, qtype uint16) (Status, []string) {
+	st := Status(dns.RcodeToString[reply.Rcode])
+	var ips []string
+	for _, rr := range reply.Answer {
+		switch v := rr.(type) {
+		case *dns.A:
+			if qtype == dns.TypeA {
+				ips = append(ips, v.A.String())
+			}
+		case *dns.AAAA:
+			if qtype == dns.TypeAAAA {
+				ips = append(ips, v.AAAA.String())
+			}
+		}
+	}
+	return st, ips
+}
+
+// classifyTransportError distinguishes timeouts from other transport errors.
+func classifyTransportError(ctx context.Context, err error) (Status, string) {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || isTimeoutErr(err) {
+		return StatusTIMEOUT, ""
+	}
+	return StatusERROR, err.Error()
 }

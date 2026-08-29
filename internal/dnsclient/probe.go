@@ -27,19 +27,34 @@ func (p ProbeResult) SuccessRate() float64 {
 
 // ProbeServer queries one server `attempts` times sequentially, each exchange
 // bounded by `timeout`. It stops early when ctx is canceled. A single timing
-// out or failing server never blocks other callers (see ProbeAll).
+// out or failing server never blocks other nodes (see ProbeAll).
 func ProbeServer(ctx context.Context, server config.DNSServer, question string, qtype uint16, attempts int, timeout time.Duration) ProbeResult {
-	if attempts < 1 {
-		attempts = 1
-	}
 	res, err := NewResolver(server.Protocol)
 	if err != nil {
-		return ProbeResult{
-			Server:    server,
-			Attempts:  []Result{{ServerName: server.Name, Protocol: server.Protocol, Status: StatusERROR, Detail: err.Error()}},
-			Successes: 0,
-			Failures:  1,
-		}
+		return errorProbeResult(server, err)
+	}
+	return ProbeWithResolver(ctx, res, server, question, qtype, attempts, timeout)
+}
+
+func errorProbeResult(server config.DNSServer, err error) ProbeResult {
+	return ProbeResult{
+		Server: server,
+		Attempts: []Result{{
+			ServerName: server.Name,
+			Protocol:   server.Protocol,
+			Status:     StatusERROR,
+			Detail:     err.Error(),
+		}},
+		Successes: 0,
+		Failures:  1,
+	}
+}
+
+// ProbeWithResolver is ProbeServer with an injected Resolver (used by callers
+// that manage their own transport, e.g. tests with local TLS endpoints).
+func ProbeWithResolver(ctx context.Context, res Resolver, server config.DNSServer, question string, qtype uint16, attempts int, timeout time.Duration) ProbeResult {
+	if attempts < 1 {
+		attempts = 1
 	}
 
 	pr := ProbeResult{Server: server}
