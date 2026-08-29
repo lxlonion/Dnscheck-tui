@@ -10,6 +10,12 @@ import (
 	"dnscheck/internal/config"
 )
 
+// Query types used by probes and resolution.
+const (
+	QTypeA    uint16 = 1
+	QTypeAAAA uint16 = 28
+)
+
 // Status is the classification of a single DNS exchange outcome.
 type Status string
 

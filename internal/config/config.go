@@ -37,7 +37,7 @@ type DNSServer struct {
 type Config struct {
 	TimeoutMs  int         `json:"timeout_ms"`
 	DNSServers []DNSServer `json:"dns_servers"`
-	Domains   []string    `json:"domains"`
+	Domains    []string    `json:"domains"`
 }
 
 // Timeout returns the global per-query timeout as a Duration.
