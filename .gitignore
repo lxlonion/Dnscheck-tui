@@ -2,3 +2,4 @@
 /dnscheck-*
 /dist/
 .DS_Store
+config.json
