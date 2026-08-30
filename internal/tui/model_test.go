@@ -56,6 +56,16 @@ func keyMsg(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyShiftTab}
 	case "ctrl+c":
 		return tea.KeyMsg{Type: tea.KeyCtrlC}
+	case "enter":
+		return tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "up":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case " ":
+		return tea.KeyMsg{Type: tea.KeySpace}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 	}
@@ -272,6 +282,12 @@ func TestViewNoResultsPlaceholder(t *testing.T) {
 	}
 }
 
+// picker opens the Page 2 domain picker the way the Tab key would.
+func picker(m Model) Model {
+	m2, _ := m.Update(keyMsg("tab"))
+	return m2.(Model)
+}
+
 func fakePage2() ([]dnsclient.DomainResult, map[string]geo.Info) {
 	mkSrv := func(name string, proto config.Protocol) config.DNSServer {
 		return config.DNSServer{Name: name, Address: "127.0.0.1:53", Protocol: proto}
@@ -336,29 +352,259 @@ func TestViewPage2Running(t *testing.T) {
 	}
 }
 
-func TestPage2AutoStartOnTabEnter(t *testing.T) {
+func TestViewPage2IdleFooterAndStatus(t *testing.T) {
 	m := New(testConfig())
+	m.tab = TabGeo
+	m.width = 120
+	out := stripAnsi(m.View())
+	if !strings.Contains(out, "[D] 选择域名") {
+		t.Errorf("idle Page 2 footer should advertise [D]:\n%s", out)
+	}
+	if !strings.Contains(out, "未开始") {
+		t.Errorf("Page 2 must show 未开始 before the first run:\n%s", out)
+	}
+	if strings.Contains(out, "已完成") {
+		t.Error("Page 2 must not claim 已完成 before the first run")
+	}
+
+	m2, _ := m.Update(keyMsg("d"))
+	out2 := stripAnsi(m2.(Model).View())
+	if strings.Contains(out2, "[D] 选择域名") {
+		t.Error("picker footer should show picker hints, not [D]")
+	}
+	for _, want := range []string{"[空格] 勾选/取消", "[回车] 开始测试", "[Esc] 取消"} {
+		if !strings.Contains(out2, want) {
+			t.Errorf("picker footer missing %q:\n%s", want, out2)
+		}
+	}
+}
+
+func TestPage2FirstEnterOpensSelector(t *testing.T) {
+	m := New(testConfig())
+	m.width = 120
 	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+
 	m2, cmd := m.Update(keyMsg("tab"))
 	mm := m2.(Model)
-	if mm.tab != TabGeo || !mm.page2Running || !mm.page2EverRan {
-		t.Fatalf("tab enter: tab=%d running=%v everRan=%v", mm.tab, mm.page2Running, mm.page2EverRan)
+	if mm.tab != TabGeo || !mm.selActive || mm.page2Running || mm.page2EverRan {
+		t.Fatalf("tab enter: tab=%d selActive=%v running=%v everRan=%v",
+			mm.tab, mm.selActive, mm.page2Running, mm.page2EverRan)
 	}
-	msg := cmd()
-	d, ok := msg.(page2DoneMsg)
+	if cmd != nil {
+		t.Error("first entry must open the picker, not start the test")
+	}
+	if len(mm.selChecked) != len(mm.cfg.Domains) {
+		t.Fatalf("selChecked = %d, want %d (all pre-checked)", len(mm.selChecked), len(mm.cfg.Domains))
+	}
+	for i, c := range mm.selChecked {
+		if !c {
+			t.Errorf("selChecked[%d] = false, want pre-checked", i)
+		}
+	}
+
+	out := stripAnsi(mm.View())
+	for _, want := range []string{
+		"选择要测试解析的域名",
+		"已选 2 / 2",
+		"> [x] probe.example",
+		"[x] other.example",
+		"[↑/↓] 移动",
+		"[回车] 开始测试",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("selector view missing %q:\n%s", want, out)
+		}
+	}
+
+	// Confirming the untouched selection starts the full run.
+	m3, cmd2 := mm.Update(keyMsg("enter"))
+	mm3 := m3.(Model)
+	if !mm3.page2Running || !mm3.page2EverRan || mm3.selActive {
+		t.Fatalf("confirm: running=%v everRan=%v selActive=%v", mm3.page2Running, mm3.page2EverRan, mm3.selActive)
+	}
+	if len(mm3.run2Domains) != len(mm3.cfg.Domains) {
+		t.Errorf("run2Domains = %d, want %d", len(mm3.run2Domains), len(mm3.cfg.Domains))
+	}
+	d, ok := cmd2().(page2DoneMsg)
 	if !ok {
-		t.Fatalf("cmd returned %T, want page2DoneMsg", msg)
+		t.Fatalf("cmd returned %T, want page2DoneMsg", cmd2())
 	}
 	if d.runID != 1 {
 		t.Errorf("runID = %d, want 1", d.runID)
 	}
-	m3, _ := mm.Update(d)
-	mmm := m3.(Model)
+	m4, _ := mm3.Update(d)
+	mmm := m4.(Model)
 	if mmm.page2Running {
 		t.Error("page2 completion should clear running")
 	}
 	if len(mmm.page2Results) != len(mmm.cfg.Domains) {
 		t.Fatalf("results = %d domains, want %d", len(mmm.page2Results), len(mmm.cfg.Domains))
+	}
+}
+
+func TestSelectorNavigationAndToggle(t *testing.T) {
+	m := New(testConfig())
+	mm, _ := m.switchTab(TabGeo)
+	mm = mm.(Model)
+
+	mm2, _ := mm.Update(keyMsg("down"))
+	if got := mm2.(Model).selCursor; got != 1 {
+		t.Errorf("down: cursor = %d, want 1", got)
+	}
+	mm3, _ := mm2.Update(keyMsg("down"))
+	if got := mm3.(Model).selCursor; got != 0 {
+		t.Errorf("down wraps: cursor = %d, want 0", got)
+	}
+	mm4, _ := mm3.Update(keyMsg("up"))
+	if got := mm4.(Model).selCursor; got != 1 {
+		t.Errorf("up wraps: cursor = %d, want 1", got)
+	}
+
+	mm5, _ := mm4.Update(keyMsg(" "))
+	five := mm5.(Model)
+	if five.selChecked[1] {
+		t.Error("space should uncheck the highlighted domain")
+	}
+	if !five.selChecked[0] {
+		t.Error("other domains must keep their check state")
+	}
+	out := stripAnsi(five.View())
+	if !strings.Contains(out, "> [ ] other.example") {
+		t.Errorf("unchecked cursor line not rendered:\n%s", out)
+	}
+	if !strings.Contains(out, "已选 1 / 2") {
+		t.Errorf("selected counter not updated:\n%s", out)
+	}
+}
+
+func TestSelectorConfirmStartsSelectedOnly(t *testing.T) {
+	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+	mm := picker(m)
+
+	// Highlight the second domain and uncheck it, then confirm.
+	mm2, _ := mm.Update(keyMsg("down"))
+	mm3, _ := mm2.Update(keyMsg(" "))
+	m4, cmd := mm3.Update(keyMsg("enter"))
+	confirmed := m4.(Model)
+	if !confirmed.page2Running {
+		t.Fatal("confirm should start the resolve run")
+	}
+	if len(confirmed.run2Domains) != 1 || confirmed.run2Domains[0] != "probe.example" {
+		t.Fatalf("run2Domains = %v, want [probe.example]", confirmed.run2Domains)
+	}
+	d := cmd().(page2DoneMsg)
+	m5, _ := confirmed.Update(d)
+	if got := len(m5.(Model).page2Results); got != 1 {
+		t.Fatalf("results = %d domains, want 1", got)
+	}
+	if m5.(Model).page2Results[0].Domain != "probe.example" {
+		t.Errorf("resolved domain = %q, want probe.example", m5.(Model).page2Results[0].Domain)
+	}
+}
+
+func TestSelectorEnterWithoutSelectionWarns(t *testing.T) {
+	m := New(testConfig())
+	mm := picker(m)
+	mm2, _ := mm.Update(keyMsg(" "))
+	mm3, _ := mm2.Update(keyMsg("down"))
+	mm4, _ := mm3.Update(keyMsg(" "))
+	warned, cmd := mm4.Update(keyMsg("enter"))
+	wm := warned.(Model)
+	if cmd != nil || wm.page2Running || wm.page2EverRan {
+		t.Fatal("enter with nothing selected must not start the test")
+	}
+	if !wm.selActive || wm.selWarn == "" {
+		t.Fatalf("warn = %q selActive = %v, want a warning and the picker to stay open", wm.selWarn, wm.selActive)
+	}
+	if !strings.Contains(stripAnsi(wm.View()), wm.selWarn) {
+		t.Error("warning must be visible in the picker view")
+	}
+	// Toggling clears the warning; Enter now starts.
+	mm5, _ := wm.Update(keyMsg(" "))
+	if mm5.(Model).selWarn != "" {
+		t.Error("toggling should clear the warning")
+	}
+	mm6, cmd2 := mm5.Update(keyMsg("enter"))
+	f := mm6.(Model)
+	if !f.page2Running || cmd2 == nil || len(f.run2Domains) != 1 {
+		t.Errorf("re-toggled selection must start with 1 domain, got %v", f.run2Domains)
+	}
+}
+
+func TestSelectorEscThenRReopens(t *testing.T) {
+	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+	mm := picker(m)
+
+	mm2, _ := mm.Update(keyMsg("esc"))
+	idle := mm2.(Model)
+	if idle.selActive || idle.page2Running {
+		t.Fatal("esc should dismiss the picker without starting")
+	}
+	m3, cmd := idle.Update(keyMsg("R"))
+	reopened := m3.(Model)
+	if !reopened.selActive || cmd != nil {
+		t.Fatal("R before the first run should reopen the picker")
+	}
+
+	// After a completed run, Esc leaves results on screen and D reopens.
+	m4, cmd2 := reopened.Update(keyMsg("enter"))
+	running := m4.(Model)
+	m4b, _ := running.Update(cmd2().(page2DoneMsg))
+	finished := m4b.(Model)
+	if finished.selActive {
+		t.Error("picker must stay closed while results are shown")
+	}
+	m5, _ := finished.Update(keyMsg("d"))
+	if !m5.(Model).selActive {
+		t.Error("D should reopen the picker after a run")
+	}
+}
+
+func TestSelectorSwallowsTestTriggers(t *testing.T) {
+	m := New(testConfig())
+	mm := picker(m)
+	for _, key := range []string{"r", "R", "s", "S", "d", "D"} {
+		m2, cmd := mm.Update(keyMsg(key))
+		f := m2.(Model)
+		if f.page2Running || f.page2EverRan || cmd != nil {
+			t.Errorf("key %q while picking domains must not start the test", key)
+		}
+		if !f.selActive {
+			t.Errorf("key %q must not close the picker", key)
+		}
+	}
+	// Page switching still works and returns to the open picker.
+	m3, _ := mm.Update(keyMsg("1"))
+	if m3.(Model).tab != TabDNS {
+		t.Error("key 1 should still switch to Page 1 while picking")
+	}
+	m4, _ := m3.Update(keyMsg("tab"))
+	f := m4.(Model)
+	if f.tab != TabGeo || !f.selActive {
+		t.Error("returning to Page 2 must keep the picker open")
+	}
+}
+
+func TestRerunReusesSelectedDomains(t *testing.T) {
+	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+	mm := picker(m)
+
+	mm2, _ := mm.Update(keyMsg("down"))
+	mm3, _ := mm2.Update(keyMsg(" "))
+	m4, cmd := mm3.Update(keyMsg("enter"))
+	f := m4.(Model)
+	f.page2Running = false
+	f.Update(cmd().(page2DoneMsg))
+
+	m5, cmd2 := f.Update(keyMsg("R"))
+	if !m5.(Model).page2Running || cmd2 == nil {
+		t.Fatal("R should rerun with the previous selection")
+	}
+	if got := m5.(Model).run2Domains; len(got) != 1 || got[0] != "probe.example" {
+		t.Errorf("rerun domains = %v, want [probe.example]", got)
 	}
 }
 
@@ -368,6 +614,8 @@ func TestPage2SecondTabEnterDoesNotRestart(t *testing.T) {
 	m2, _ := m.Update(keyMsg("tab"))
 	mm := m2.(Model)
 	mm.page2Running = false
+	mm.page2EverRan = true
+	mm.selActive = false // a real run would have closed the picker
 	mm.page2Results, _ = fakePage2()
 
 	m3, cmd2 := mm.Update(keyMsg("tab"))
@@ -377,8 +625,8 @@ func TestPage2SecondTabEnterDoesNotRestart(t *testing.T) {
 	}
 	m4, cmd3 := mm3.Update(keyMsg("tab"))
 	mm4 := m4.(Model)
-	if mm4.page2Running || cmd3 != nil {
-		t.Error("re-entering Page 2 with existing results must not re-trigger")
+	if mm4.page2Running || mm4.selActive || cmd3 != nil {
+		t.Error("re-entering Page 2 with existing results must not re-trigger or reopen the picker")
 	}
 	_ = cmd2
 }
@@ -387,7 +635,7 @@ func TestPageIndependentRunIDs(t *testing.T) {
 	m := New(testConfig())
 	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
 	s1 := m.startProbe()
-	s2 := s1.model.startResolve()
+	s2 := s1.model.startResolve(s1.model.cfg.Domains)
 	m2, _ := s2.model.Update(probeDoneMsg{runID: s1.model.run1ID, results: fakeResults()})
 	m3, _ := m2.Update(page2DoneMsg{runID: s2.model.run2ID, results: nil, geo: nil})
 	mm := m3.(Model)
@@ -402,7 +650,7 @@ func TestPageIndependentRunIDs(t *testing.T) {
 func TestRestartActivePerPage(t *testing.T) {
 	m := New(testConfig())
 	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
-	s := m.startResolve()
+	s := m.startResolve(m.cfg.Domains)
 	mm := s.model
 	mm.tab = TabGeo
 	mm.page2Running = false
@@ -426,8 +674,10 @@ func TestBothPagesRunConcurrently(t *testing.T) {
 	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
 
 	m1, cmd1 := m.Update(probeStartMsg{})
-	m2, cmd2 := m1.Update(keyMsg("tab"))
-	mm := m2.(Model)
+	m2, _ := m1.Update(keyMsg("tab"))
+	// Confirming the picker starts Page 2 while Page 1 keeps running.
+	m3, cmd2 := m2.Update(keyMsg("enter"))
+	mm := m3.(Model)
 	if !mm.page1Running || !mm.page2Running {
 		t.Fatalf("combined mode: page1 running=%v, page2 running=%v, want both true", mm.page1Running, mm.page2Running)
 	}
@@ -437,9 +687,9 @@ func TestBothPagesRunConcurrently(t *testing.T) {
 	if !ok1 || !ok2 {
 		t.Fatalf("cmd types: %T / %T", cmd1(), cmd2())
 	}
-	m3, _ := mm.Update(d1)
-	m4, _ := m3.Update(d2)
-	f := m4.(Model)
+	m4, _ := mm.Update(d1)
+	m5, _ := m4.Update(d2)
+	f := m5.(Model)
 	if f.page1Running || f.page2Running {
 		t.Error("both pages should be finished")
 	}
@@ -462,17 +712,22 @@ func TestPage2OnlyModeWithoutPage1(t *testing.T) {
 		t.Fatal("page 1 should be stopped")
 	}
 
-	m2, cmd2 := stopped.Update(keyMsg("tab"))
+	m2, _ := stopped.Update(keyMsg("tab"))
 	mm := m2.(Model)
-	if !mm.page2Running {
+	if !mm.selActive {
+		t.Fatal("first Page 2 entry must show the domain picker")
+	}
+	m3, cmd2 := mm.Update(keyMsg("enter"))
+	mm3 := m3.(Model)
+	if !mm3.page2Running {
 		t.Fatal("page 2 must run even though page 1 never completed (no dependency)")
 	}
 	d2, ok := cmd2().(page2DoneMsg)
 	if !ok {
 		t.Fatalf("cmd returned %T", cmd2())
 	}
-	m3, _ := mm.Update(d2)
-	f := m3.(Model)
+	m4, _ := mm3.Update(d2)
+	f := m4.(Model)
 	if len(f.page2Results) != len(f.cfg.Domains) {
 		t.Errorf("page 2 results = %d domains, want %d", len(f.page2Results), len(f.cfg.Domains))
 	}
@@ -500,14 +755,15 @@ func TestRerunDoesNotDisturbOtherPage(t *testing.T) {
 
 	m1, _ := m.Update(probeStartMsg{})
 	m2, _ := m1.Update(keyMsg("tab"))
-	mm := m2.(Model)
+	m3, _ := m2.Update(keyMsg("enter"))
+	mm := m3.(Model)
 	if !mm.page1Running || !mm.page2Running {
 		t.Fatal("precondition: both pages running")
 	}
 
-	m3, cmd3 := mm.Update(keyMsg("R"))
-	f := m3.(Model)
-	if !f.page2Running || cmd3 == nil {
+	m4, cmd4 := mm.Update(keyMsg("R"))
+	f := m4.(Model)
+	if !f.page2Running || cmd4 == nil {
 		t.Fatal("R should restart the running Page 2 test")
 	}
 	if f.run2ID != mm.run2ID+1 {
@@ -519,7 +775,7 @@ func TestRerunDoesNotDisturbOtherPage(t *testing.T) {
 	if f.run1ID != mm.run1ID {
 		t.Error("page 1 runID must be untouched")
 	}
-	_ = cmd3()
+	_ = cmd4()
 }
 
 func TestNumberKeysSwitchTabs(t *testing.T) {
@@ -528,8 +784,8 @@ func TestNumberKeysSwitchTabs(t *testing.T) {
 
 	m2, cmd := m.Update(keyMsg("2"))
 	mm := m2.(Model)
-	if mm.tab != TabGeo || !mm.page2Running || cmd == nil {
-		t.Error("key 2 should jump to Page 2 and auto-start it on first entry")
+	if mm.tab != TabGeo || !mm.selActive || mm.page2Running || cmd != nil {
+		t.Error("key 2 should jump to Page 2 and open the domain picker on first entry")
 	}
 	m3, _ := mm.Update(keyMsg("1"))
 	if m3.(Model).tab != TabDNS {
@@ -551,7 +807,7 @@ func TestStopDiscardsLateResults(t *testing.T) {
 		t.Error("late results from a stopped run must be discarded")
 	}
 
-	s2 := m.startResolve()
+	s2 := m.startResolve(m.cfg.Domains)
 	s2.model.tab = TabGeo
 	m4, _ := s2.model.Update(keyMsg("s"))
 	mm4 := m4.(Model)
@@ -582,6 +838,15 @@ func TestViewResizeAdaptive(t *testing.T) {
 		for line := range strings.SplitSeq(out, "\n") {
 			if visible := visibleWidth(line); visible > size.Width {
 				t.Errorf("line width %d exceeds terminal %d at resize: %q", visible, size.Width, line)
+			}
+		}
+
+		// The domain picker must respect narrow terminals too.
+		mp, _ := mm.Update(keyMsg("tab"))
+		out2 := mp.(Model).View()
+		for line := range strings.SplitSeq(out2, "\n") {
+			if visible := visibleWidth(line); visible > size.Width {
+				t.Errorf("picker line width %d exceeds terminal %d at resize: %q", visible, size.Width, line)
 			}
 		}
 	}

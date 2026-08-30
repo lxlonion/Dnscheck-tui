@@ -45,6 +45,8 @@ func (m Model) View() string {
 	b.WriteString("\n\n")
 	if m.tab == TabDNS {
 		b.WriteString(m.page1View())
+	} else if m.selActive {
+		b.WriteString(m.selectorView())
 	} else {
 		b.WriteString(m.page2View())
 	}
@@ -66,9 +68,25 @@ func (m Model) headerView() string {
 }
 
 func (m Model) footerView() string {
-	hints := "[Tab] 切换页面 | [R] 重新触发测试 | [S] 止/启测试 | [Q] 退出程序"
-	if m.width > 0 && m.width < 90 {
-		hints = "[Tab] 切页 | [R] 重测 | [S] 止/启 | [Q] 退出"
+	var hints string
+	if m.selActive && m.tab == TabGeo {
+		hints = "[↑/↓] 移动 | [空格] 勾选/取消 | [回车] 开始测试 | [Esc] 取消 | [Q] 退出程序"
+		if m.width > 0 && m.width < 90 {
+			hints = "[↑/↓] 移动 | [空格] 勾选 | [回车] 开始 | [Q] 退出"
+		}
+	} else {
+		hints = "[Tab] 切换页面 | [R] 重新触发测试 | [S] 止/启测试"
+		if m.tab == TabGeo && !m.page2Running {
+			hints += " | [D] 选择域名"
+		}
+		hints += " | [Q] 退出程序"
+		if m.width > 0 && m.width < 90 {
+			hints = "[Tab] 切页 | [R] 重测 | [S] 止/启"
+			if m.tab == TabGeo && !m.page2Running {
+				hints += " | [D] 选域名"
+			}
+			hints += " | [Q] 退出"
+		}
 	}
 	status := fmt.Sprintf("终端 %dx%d", m.width, m.height)
 	line := subtleStyle.Render(hints) + "    " + subtleStyle.Render(status)
@@ -82,6 +100,8 @@ func (m Model) page1View() string {
 	statusTxt := subtleStyle.Render("已完成")
 	if m.page1Running {
 		statusTxt = yellowStyle.Render("测试中…")
+	} else if !m.page1EverRan {
+		statusTxt = subtleStyle.Render("未开始")
 	}
 	title := titleStyle.Render("DNS 节点性能仪表盘")
 	meta := fmt.Sprintf("探测域名: %s | Timeout: %s | ×%d | 状态: ",
@@ -154,10 +174,60 @@ func (m Model) page1View() string {
 	return b.String()
 }
 
+// selectorView renders the Page 2 domain picker shown before the first
+// resolve run (re-opened any time Page 2 is idle with [D]).
+func (m Model) selectorView() string {
+	checked := 0
+	for _, c := range m.selChecked {
+		if c {
+			checked++
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("域名解析与 IP Geo"))
+	b.WriteString("\n")
+	meta := subtleStyle.Render(fmt.Sprintf("选择要测试解析的域名（已选 %d / %d）",
+		checked, len(m.cfg.Domains)))
+	if m.width > 0 {
+		meta = fitLine(meta, m.width)
+	}
+	b.WriteString(meta)
+	b.WriteString("\n\n")
+
+	if m.selWarn != "" {
+		b.WriteString(yellowStyle.Render(m.selWarn))
+		b.WriteString("\n\n")
+	}
+
+	for i, d := range m.cfg.Domains {
+		cursor := "  "
+		if i == m.selCursor {
+			cursor = "> "
+		}
+		mark := subtleStyle.Render("[ ]")
+		if i < len(m.selChecked) && m.selChecked[i] {
+			mark = greenStyle.Render("[x]")
+		}
+		line := cursor + mark + " " + d
+		if i == m.selCursor {
+			line = cursorStyle.Render(line)
+		}
+		if m.width > 0 {
+			line = fitLine(line, m.width)
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 func (m Model) page2View() string {
 	statusTxt := subtleStyle.Render("已完成")
 	if m.page2Running {
 		statusTxt = yellowStyle.Render("测试中…")
+	} else if !m.page2EverRan {
+		statusTxt = subtleStyle.Render("未开始")
 	}
 	title := titleStyle.Render("域名解析与 IP Geo")
 	meta := subtleStyle.Render(fmt.Sprintf("Geo API: ip-api.com | 并发上限 %d | 内存缓存 | 状态: ", geoWorkers)) + statusTxt

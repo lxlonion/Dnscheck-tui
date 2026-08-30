@@ -37,6 +37,8 @@ type probeStartMsg struct{}
 
 // Model is the root bubbletea model. Page 1 (probe) and Page 2 (resolve +
 // geo) run independently: each has its own run ID, cancel func and results.
+// Page 2 opens a domain picker (↑/↓ move, Space toggle, Enter confirm)
+// before its first run instead of testing every configured domain at once.
 type Model struct {
 	cfg    *config.Config
 	tab    int
@@ -55,6 +57,13 @@ type Model struct {
 	page2Geo     map[string]geo.Info
 	cancel2      context.CancelFunc
 	page2EverRan bool
+	run2Domains  []string
+
+	// Domain picker state for Page 2. selChecked parallels cfg.Domains.
+	selActive  bool
+	selCursor  int
+	selChecked []bool
+	selWarn    string
 
 	geoClient *geo.Client
 
@@ -108,7 +117,10 @@ func (m Model) startProbe() probeStart {
 	return probeStart{model: m, cmd: cmd}
 }
 
-func (m Model) startResolve() probeStart {
+func (m Model) startResolve(domains []string) probeStart {
+	if len(domains) == 0 {
+		domains = m.cfg.Domains
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.run2ID++
 	m.cancel2 = cancel
@@ -116,10 +128,10 @@ func (m Model) startResolve() probeStart {
 	m.page2EverRan = true
 	m.page2Results = nil
 	m.page2Geo = nil
+	m.run2Domains = domains
 
 	runID := m.run2ID
 	servers := m.cfg.DNSServers
-	domains := m.cfg.Domains
 	timeout := m.cfg.Timeout()
 	geoClient := m.geoClient
 	cmd := func() tea.Msg {
@@ -128,6 +140,39 @@ func (m Model) startResolve() probeStart {
 		return page2DoneMsg{runID: runID, results: results, geo: geoInfos}
 	}
 	return probeStart{model: m, cmd: cmd}
+}
+
+// openSelector shows the Page 2 domain picker. Domains start fully checked
+// so confirming immediately tests everything; re-opening keeps the previous
+// choices for tweaking.
+func (m Model) openSelector() Model {
+	if len(m.selChecked) != len(m.cfg.Domains) {
+		m.selChecked = make([]bool, len(m.cfg.Domains))
+		for i := range m.selChecked {
+			m.selChecked[i] = true
+		}
+	}
+	m.selActive = true
+	m.selWarn = ""
+	return m
+}
+
+// confirmSelection starts the Page 2 resolve run with the checked domains.
+// Without any selection it keeps the picker open and sets a warning.
+func (m Model) confirmSelection() probeStart {
+	var domains []string
+	for i, d := range m.cfg.Domains {
+		if i < len(m.selChecked) && m.selChecked[i] {
+			domains = append(domains, d)
+		}
+	}
+	if len(domains) == 0 {
+		m.selWarn = "请至少选择一个域名再开始测试"
+		return probeStart{model: m}
+	}
+	m.selActive = false
+	m.selWarn = ""
+	return m.startResolve(domains)
 }
 
 // Update handles key bindings, window resizing and test completion.
@@ -159,6 +204,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.selActive && m.tab == TabGeo {
+			switch msg.String() {
+			case "up", "down", " ", "spacebar", "enter", "esc":
+				return m.updateSelector(msg)
+			case "r", "R", "s", "S", "d", "D":
+				// Swallow test triggers while picking domains so the
+				// selection is always confirmed with Enter first.
+				return m, nil
+			}
+			// q/ctrl+c, tab/1/2 fall through to the shared bindings below.
+		}
 		switch msg.String() {
 		case "q", "Q", "ctrl+c":
 			m.quitting = true
@@ -175,6 +231,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.switchTab(TabDNS)
 		case "2":
 			return m.switchTab(TabGeo)
+		case "d", "D":
+			if m.tab == TabGeo && !m.page2Running {
+				return m.openSelector(), nil
+			}
 		case "r", "R":
 			return m.restartActive()
 		case "s", "S":
@@ -184,11 +244,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateSelector handles the picker's own keys (movement, toggle, confirm,
+// dismiss). It is only reached when the picker is open on Page 2.
+func (m Model) updateSelector(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	n := len(m.cfg.Domains)
+	switch msg.String() {
+	case "up":
+		if n > 0 {
+			m.selCursor = (m.selCursor + n - 1) % n
+		}
+	case "down":
+		if n > 0 {
+			m.selCursor = (m.selCursor + 1) % n
+		}
+	case " ", "spacebar":
+		m.selWarn = ""
+		if m.selCursor < len(m.selChecked) {
+			m.selChecked[m.selCursor] = !m.selChecked[m.selCursor]
+		}
+	case "enter":
+		c := m.confirmSelection()
+		return c.model, c.cmd
+	case "esc":
+		m.selActive = false
+	}
+	return m, nil
+}
+
 func (m Model) switchTab(t int) (tea.Model, tea.Cmd) {
 	m.tab = t
 	if m.tab == TabGeo && !m.page2EverRan {
-		s := m.startResolve()
-		return s.model, s.cmd
+		// First entry opens the domain picker instead of auto-starting
+		// the resolve run.
+		return m.openSelector(), nil
 	}
 	return m, nil
 }
@@ -201,10 +289,13 @@ func (m Model) restartActive() (tea.Model, tea.Cmd) {
 		s := m.startProbe()
 		return s.model, s.cmd
 	}
+	if !m.page2EverRan {
+		return m.openSelector(), nil
+	}
 	if m.cancel2 != nil {
 		m.cancel2()
 	}
-	s := m.startResolve()
+	s := m.startResolve(m.run2Domains)
 	return s.model, s.cmd
 }
 
@@ -225,6 +316,9 @@ func (m Model) toggleActive() (tea.Model, tea.Cmd) {
 		m.run2ID++
 		return m, nil
 	}
-	s := m.startResolve()
+	if !m.page2EverRan {
+		return m.openSelector(), nil
+	}
+	s := m.startResolve(m.run2Domains)
 	return s.model, s.cmd
 }

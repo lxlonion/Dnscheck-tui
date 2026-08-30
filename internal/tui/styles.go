@@ -11,4 +11,5 @@ var (
 	redStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	yellowStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	sepStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+	cursorStyle     = lipgloss.NewStyle().Bold(true)
 )
