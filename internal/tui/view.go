@@ -81,13 +81,13 @@ func (m Model) bodyLines() ([]string, bool) {
 func (m Model) headerView() string {
 	dns := "  [Tab / 1] DNS 性能测试"
 	geo := "  [Tab / 2] 域名解析与 IP Geo"
-	var line string
+	dnsStyle, geoStyle := subtleStyle, tabActiveStyle
 	if m.tab == TabDNS {
-		line = tabActiveStyle.Render(lipgloss.JoinHorizontal(lipgloss.Top, dns, subtleStyle.Render(geo)))
-	} else {
-		line = subtleStyle.Render(lipgloss.JoinHorizontal(lipgloss.Top, dns, tabActiveStyle.Render(geo)))
+		dnsStyle, geoStyle = tabActiveStyle, subtleStyle
 	}
-	return fitLine(line, m.width)
+	// Style each label before joining: wrapping the joined line in the
+	// active style makes its underline bleed into the inactive label.
+	return fitLine(lipgloss.JoinHorizontal(lipgloss.Top, dnsStyle.Render(dns), geoStyle.Render(geo)), m.width)
 }
 
 func (m Model) footerView(scroll, maxOffset int) string {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"dnscheck/internal/config"
 	"dnscheck/internal/dnsclient"
@@ -233,6 +234,24 @@ func TestStaleRunDiscarded(t *testing.T) {
 	m2, _ := s.model.Update(probeDoneMsg{runID: s.model.run1ID - 1, results: fakeResults()})
 	if len(m2.(Model).page1Results) != 0 {
 		t.Error("stale run results must be discarded")
+	}
+}
+
+func TestHeaderUnderlineOnlyOnActiveTab(t *testing.T) {
+	m := New(testConfig())
+	m.width = 200
+	dns := "  [Tab / 1] DNS 性能测试"
+	geo := "  [Tab / 2] 域名解析与 IP Geo"
+
+	want := lipgloss.JoinHorizontal(lipgloss.Top, tabActiveStyle.Render(dns), subtleStyle.Render(geo))
+	if got := m.headerView(); got != want {
+		t.Errorf("page 1 header = %q, want %q", got, want)
+	}
+
+	m.tab = TabGeo
+	want = lipgloss.JoinHorizontal(lipgloss.Top, subtleStyle.Render(dns), tabActiveStyle.Render(geo))
+	if got := m.headerView(); got != want {
+		t.Errorf("page 2 header = %q, want %q", got, want)
 	}
 }
 
