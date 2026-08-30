@@ -587,6 +587,167 @@ func TestSelectorSwallowsTestTriggers(t *testing.T) {
 	}
 }
 
+func TestScrollKeysAndMouse(t *testing.T) {
+	m := New(testConfig())
+
+	m2, _ := m.Update(keyMsg("down"))
+	if got := m2.(Model).scroll; got != 1 {
+		t.Errorf("down: scroll = %d, want 1", got)
+	}
+	m3, _ := m2.Update(keyMsg("up"))
+	if got := m3.(Model).scroll; got != 0 {
+		t.Errorf("up: scroll = %d, want 0", got)
+	}
+	m4, _ := m3.Update(keyMsg("up"))
+	if got := m4.(Model).scroll; got != 0 {
+		t.Errorf("up below top must clamp, scroll = %d", got)
+	}
+
+	m5, _ := m4.Update(tea.MouseMsg{Type: tea.MouseWheelDown})
+	if got := m5.(Model).scroll; got != wheelStep {
+		t.Errorf("wheel down: scroll = %d, want %d", got, wheelStep)
+	}
+	m6, _ := m5.Update(tea.MouseMsg{Type: tea.MouseWheelUp})
+	if got := m6.(Model).scroll; got != 0 {
+		t.Errorf("wheel up: scroll = %d, want 0", got)
+	}
+
+	m7, _ := m6.Update(keyMsg("pgup"))
+	if got := m7.(Model).scroll; got != 0 {
+		t.Errorf("pgup below top must clamp, scroll = %d", got)
+	}
+	m8, _ := m7.Update(keyMsg("pgdown"))
+	if got := m8.(Model).scroll; got != m.visibleHeight() {
+		t.Errorf("pgdown: scroll = %d, want %d", got, m.visibleHeight())
+	}
+	m9, _ := m8.Update(keyMsg("end"))
+	if got := m9.(Model).scroll; got <= 0 {
+		t.Errorf("end: scroll = %d, want a large offset", got)
+	}
+	m10, _ := m9.Update(keyMsg("home"))
+	if got := m10.(Model).scroll; got != 0 {
+		t.Errorf("home: scroll = %d, want 0", got)
+	}
+}
+
+func TestPickerSwallowsScrollInput(t *testing.T) {
+	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+
+	mm := picker(m)
+	m2, cmd := mm.Update(keyMsg("enter"))
+	m3, _ := m2.Update(cmd().(page2DoneMsg))
+	finished := m3.(Model)
+
+	// Reopen the picker over the results, scroll away with every input
+	// path, then dismiss: the offset must not leak into the results view.
+	m4, _ := finished.Update(keyMsg("d"))
+	inPicker := m4.(Model)
+	if !inPicker.selActive {
+		t.Fatal("D should reopen the picker")
+	}
+	for _, msg := range []tea.Msg{
+		tea.MouseMsg{Type: tea.MouseWheelDown},
+		tea.MouseMsg{Type: tea.MouseWheelDown},
+		keyMsg("pgdown"),
+		keyMsg("end"),
+		keyMsg("pgup"),
+	} {
+		m5, _ := inPicker.Update(msg)
+		inPicker = m5.(Model)
+		if got := inPicker.scroll; got != 0 {
+			t.Fatalf("scroll input while picking must be ignored, scroll = %d", got)
+		}
+		if !inPicker.selActive {
+			t.Fatal("scroll input must not close the picker")
+		}
+	}
+	m6, _ := inPicker.Update(keyMsg("esc"))
+	dismissed := m6.(Model)
+	if dismissed.selActive {
+		t.Error("esc should dismiss the picker")
+	}
+	if got := dismissed.scroll; got != 0 {
+		t.Errorf("dismissed picker must leave the results at the top, scroll = %d", got)
+	}
+}
+
+func TestScrollResetsOnTabSwitchAndNewRun(t *testing.T) {
+	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+
+	scrolled, _ := m.Update(keyMsg("end"))
+	m2, _ := scrolled.Update(keyMsg("tab"))
+	if got := m2.(Model).scroll; got != 0 {
+		t.Errorf("tab switch must reset scroll, got %d", got)
+	}
+
+	m3, _ := m2.Update(keyMsg("end"))
+	m4, _ := m3.Update(keyMsg("tab")) // back to Page 1 with results
+	m5, cmd := m4.Update(keyMsg("R"))
+	if cmd == nil {
+		t.Fatal("R should restart the Page 1 probe")
+	}
+	if got := m5.(Model).scroll; got != 0 {
+		t.Errorf("new run must reset scroll, got %d", got)
+	}
+
+	m6, _ := m5.Update(keyMsg("end"))
+	m7, _ := m6.Update(keyMsg("2"))
+	mm7 := m7.(Model)
+	if !mm7.selActive {
+		t.Fatal("first Page 2 entry must show the picker")
+	}
+	m8, cmd2 := mm7.Update(keyMsg("enter"))
+	if cmd2 == nil {
+		t.Fatal("confirm should start the run")
+	}
+	if got := m8.(Model).scroll; got != 0 {
+		t.Errorf("confirming a run must reset scroll, got %d", got)
+	}
+}
+
+func TestViewPage2ScrollsByHeight(t *testing.T) {
+	m := New(testConfig())
+	m.tab = TabGeo
+	m.width = 120
+	m.height = 12 // 8 body lines visible
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+	m.page2Results, m.page2Geo = fakePage2()
+
+	first := stripAnsi(m.View())
+	if !strings.Contains(first, "域名: probe.example") {
+		t.Errorf("top of Page 2 body must be visible:\n%s", first)
+	}
+	if strings.Contains(first, "域名: other.example") {
+		t.Error("second domain must be below the fold at height 12")
+	}
+	if !strings.Contains(first, "滚动 0/") {
+		t.Errorf("footer must show the scroll position when content overflows:\n%s", first)
+	}
+	if !strings.Contains(first, "[↑/↓] 滚动") {
+		t.Errorf("footer must advertise scrolling when content overflows:\n%s", first)
+	}
+
+	m2, _ := m.Update(keyMsg("end"))
+	last := stripAnsi(m2.(Model).View())
+	if !strings.Contains(last, "域名: other.example") {
+		t.Errorf("end must reveal the bottom of the body:\n%s", last)
+	}
+}
+
+func TestViewPickerNeverScrolls(t *testing.T) {
+	m := New(testConfig())
+	m.width = 120
+	m.height = 8 // would clip the picker if it were scrollable
+	mm := picker(m)
+
+	out := stripAnsi(mm.View())
+	if !strings.Contains(out, "other.example") {
+		t.Error("domain picker must always render in full, never scroll")
+	}
+}
+
 func TestRerunReusesSelectedDomains(t *testing.T) {
 	m := New(testConfig())
 	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")

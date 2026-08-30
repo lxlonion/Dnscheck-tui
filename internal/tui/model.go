@@ -20,6 +20,13 @@ const (
 	geoWorkers    = 4
 	defaultWidth  = 80
 	defaultHeight = 24
+
+	// wheelStep is how many lines one mouse wheel notch scrolls.
+	wheelStep = 3
+	// viewChrome is the vertical space View() spends outside the body:
+	// header line, one blank line below the header, one above the footer
+	// and the footer line itself.
+	viewChrome = 4
 )
 
 type probeDoneMsg struct {
@@ -65,6 +72,10 @@ type Model struct {
 	selChecked []bool
 	selWarn    string
 
+	// scroll is the body scroll offset (in lines) of the active page;
+	// it is clamped against the rendered content in View.
+	scroll int
+
 	geoClient *geo.Client
 
 	quitting bool
@@ -103,6 +114,7 @@ func (m Model) startProbe() probeStart {
 	m.page1Running = true
 	m.page1EverRan = true
 	m.page1Results = nil
+	m.scroll = 0
 
 	runID := m.run1ID
 	servers := m.cfg.DNSServers
@@ -129,6 +141,7 @@ func (m Model) startResolve(domains []string) probeStart {
 	m.page2Results = nil
 	m.page2Geo = nil
 	m.run2Domains = domains
+	m.scroll = 0
 
 	runID := m.run2ID
 	servers := m.cfg.DNSServers
@@ -154,8 +167,30 @@ func (m Model) openSelector() Model {
 	}
 	m.selActive = true
 	m.selWarn = ""
+	m.scroll = 0
 	return m
 }
+
+// scrollLines moves the active page's body offset by n lines. Only the
+// lower bound is clamped here; the upper bound depends on the rendered
+// content and is clamped in View.
+func (m Model) scrollLines(n int) Model {
+	m.scroll += n
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
+	return m
+}
+
+// visibleHeight is how many body lines fit below the header and above the
+// footer at the current terminal size.
+func (m Model) visibleHeight() int {
+	return max(1, m.height-viewChrome)
+}
+
+// maxScroll is an offset larger than any possible body height; End sets it
+// and View clamps it to the actual bottom of the content.
+const maxScroll = 1 << 30
 
 // confirmSelection starts the Page 2 resolve run with the checked domains.
 // Without any selection it keeps the picker open and sets a warning.
@@ -188,6 +223,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s := m.startProbe()
 		return s.model, s.cmd
 
+	case tea.MouseMsg:
+		if m.selActive && m.tab == TabGeo {
+			// The picker never scrolls: keep wheel input from leaking a
+			// scroll offset back into the results view (D → wheel → Esc).
+			return m, nil
+		}
+		// The input parser fills the legacy Type field for wheel events,
+		// so matching on it alone covers SGR and X10 mouse input.
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			return m.scrollLines(-wheelStep), nil
+		case tea.MouseWheelDown:
+			return m.scrollLines(wheelStep), nil
+		}
+		return m, nil
+
 	case probeDoneMsg:
 		if msg.runID == m.run1ID {
 			m.page1Results = msg.results
@@ -208,9 +259,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "up", "down", " ", "spacebar", "enter", "esc":
 				return m.updateSelector(msg)
-			case "r", "R", "s", "S", "d", "D":
-				// Swallow test triggers while picking domains so the
-				// selection is always confirmed with Enter first.
+			case "r", "R", "s", "S", "d", "D", "pgup", "pgdown", "home", "end":
+				// Swallow test triggers and scrolling while picking
+				// domains: the picker never scrolls, and a leaked offset
+				// would move the results view after Esc.
 				return m, nil
 			}
 			// q/ctrl+c, tab/1/2 fall through to the shared bindings below.
@@ -231,6 +283,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.switchTab(TabDNS)
 		case "2":
 			return m.switchTab(TabGeo)
+		case "up":
+			return m.scrollLines(-1), nil
+		case "down":
+			return m.scrollLines(1), nil
+		case "pgup":
+			return m.scrollLines(-m.visibleHeight()), nil
+		case "pgdown":
+			return m.scrollLines(m.visibleHeight()), nil
+		case "home":
+			m.scroll = 0
+			return m, nil
+		case "end":
+			m.scroll = maxScroll // View clamps to the actual bottom
+			return m, nil
 		case "d", "D":
 			if m.tab == TabGeo && !m.page2Running {
 				return m.openSelector(), nil
@@ -273,6 +339,7 @@ func (m Model) updateSelector(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) switchTab(t int) (tea.Model, tea.Cmd) {
 	m.tab = t
+	m.scroll = 0
 	if m.tab == TabGeo && !m.page2EverRan {
 		// First entry opens the domain picker instead of auto-starting
 		// the resolve run.

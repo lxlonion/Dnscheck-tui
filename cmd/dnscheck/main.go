@@ -21,7 +21,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if _, err := tea.NewProgram(tui.New(cfg), tea.WithAltScreen()).Run(); err != nil {
+	if _, err := tea.NewProgram(tui.New(cfg), tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "dnscheck:", err)
 		os.Exit(1)
 	}

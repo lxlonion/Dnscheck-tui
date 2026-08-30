@@ -39,20 +39,43 @@ type colSel struct {
 }
 
 // View renders the whole UI: tab header, active page body, footer hints.
+// Bodies taller than the terminal are scrolled to m.scroll; the footer
+// shows the scroll position whenever content overflows.
 func (m Model) View() string {
+	lines, scrollable := m.bodyLines()
+	visible := m.visibleHeight()
+	scroll, maxOffset := 0, 0
+	if scrollable {
+		maxOffset = max(0, len(lines)-visible)
+		scroll = clamp(m.scroll, 0, maxOffset)
+		lines = lines[scroll:min(scroll+visible, len(lines))]
+	}
+
 	var b strings.Builder
 	b.WriteString(m.headerView())
 	b.WriteString("\n\n")
-	if m.tab == TabDNS {
-		b.WriteString(m.page1View())
-	} else if m.selActive {
-		b.WriteString(m.selectorView())
-	} else {
-		b.WriteString(m.page2View())
-	}
+	b.WriteString(strings.Join(lines, "\n"))
 	b.WriteString("\n\n")
-	b.WriteString(m.footerView())
+	b.WriteString(m.footerView(scroll, maxOffset))
 	return b.String()
+}
+
+// bodyLines renders the active page body split into lines. The second
+// result reports whether the body scrolls (the domain picker is always
+// shown in full).
+func (m Model) bodyLines() ([]string, bool) {
+	var body string
+	scrollable := true
+	switch {
+	case m.tab == TabDNS:
+		body = m.page1View()
+	case m.selActive:
+		body = m.selectorView()
+		scrollable = false
+	default:
+		body = m.page2View()
+	}
+	return strings.Split(strings.TrimSuffix(body, "\n"), "\n"), scrollable
 }
 
 func (m Model) headerView() string {
@@ -67,7 +90,7 @@ func (m Model) headerView() string {
 	return fitLine(line, m.width)
 }
 
-func (m Model) footerView() string {
+func (m Model) footerView(scroll, maxOffset int) string {
 	var hints string
 	if m.selActive && m.tab == TabGeo {
 		hints = "[↑/↓] 移动 | [空格] 勾选/取消 | [回车] 开始测试 | [Esc] 取消 | [Q] 退出程序"
@@ -79,16 +102,25 @@ func (m Model) footerView() string {
 		if m.tab == TabGeo && !m.page2Running {
 			hints += " | [D] 选择域名"
 		}
+		if maxOffset > 0 {
+			hints += " | [↑/↓] 滚动"
+		}
 		hints += " | [Q] 退出程序"
 		if m.width > 0 && m.width < 90 {
 			hints = "[Tab] 切页 | [R] 重测 | [S] 止/启"
 			if m.tab == TabGeo && !m.page2Running {
 				hints += " | [D] 选域名"
 			}
+			if maxOffset > 0 {
+				hints += " | [↑/↓] 滚动"
+			}
 			hints += " | [Q] 退出"
 		}
 	}
 	status := fmt.Sprintf("终端 %dx%d", m.width, m.height)
+	if maxOffset > 0 {
+		status += fmt.Sprintf(" | 滚动 %d/%d", scroll, maxOffset)
+	}
 	line := subtleStyle.Render(hints) + "    " + subtleStyle.Render(status)
 	if m.width > 0 {
 		return fitLine(line, m.width)
