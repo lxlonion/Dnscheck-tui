@@ -76,10 +76,10 @@ On first entry to Page 2 a **domain picker** opens: `↑`/`↓` to move, `Space`
 
 ```
 cmd/dnscheck/        entry point (flag parsing + program bootstrap)
-internal/config/     JSON config loading, defaults and validation
-internal/dnsclient/  DNS resolvers (UDP/TCP/DoT/DoH), RTT probing, resolution
-internal/geo/        ip-api.com client with in-memory cache and worker pool
-internal/tui/        bubbletea model, pages, domain picker, adaptive tables
+config/              JSON config loading, defaults and validation
+dnsclient/           DNS resolvers (UDP/TCP/DoT/DoH), RTT probing, resolution
+geo/                 ip-api.com client with in-memory cache and worker pool
+tui/                 bubbletea model, pages, domain picker, adaptive tables
 ```
 
 ## Testing

@@ -10,7 +10,7 @@ import (
 
 	"github.com/miekg/dns"
 
-	"dnscheck/internal/config"
+	"dnscheck/config"
 )
 
 type mockDNS struct {

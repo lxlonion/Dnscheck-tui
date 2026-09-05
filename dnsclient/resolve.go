@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"dnscheck/internal/config"
+	"dnscheck/config"
 )
 
 // ResolveResult is the outcome of resolving one domain through one DNS

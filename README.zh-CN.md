@@ -76,10 +76,10 @@ go build -o dnscheck ./cmd/dnscheck
 
 ```
 cmd/dnscheck/        入口（参数解析与程序启动）
-internal/config/     JSON 配置加载、默认值与校验
-internal/dnsclient/  DNS 解析器（UDP/TCP/DoT/DoH）、RTT 探测、域名解析
-internal/geo/        ip-api.com 客户端（内存缓存 + Worker Pool）
-internal/tui/        bubbletea 模型、双页面、域名选择器、自适应表格
+config/              JSON 配置加载、默认值与校验
+dnsclient/           DNS 解析器（UDP/TCP/DoT/DoH）、RTT 探测、域名解析
+geo/                 ip-api.com 客户端（内存缓存 + Worker Pool）
+tui/                 bubbletea 模型、双页面、域名选择器、自适应表格
 ```
 
 ## 测试

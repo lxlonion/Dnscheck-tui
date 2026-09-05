@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"dnscheck/internal/config"
+	"dnscheck/config"
 )
 
 func TestResolveServerAAndAAAA(t *testing.T) {

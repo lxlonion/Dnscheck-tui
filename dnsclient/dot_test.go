@@ -10,7 +10,7 @@ import (
 
 	"github.com/miekg/dns"
 
-	"dnscheck/internal/config"
+	"dnscheck/config"
 )
 
 func startDoTMock(t *testing.T) (addr string, pool *x509.CertPool) {

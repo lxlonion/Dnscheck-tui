@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"dnscheck/internal/config"
-	"dnscheck/internal/tui"
+	"dnscheck/config"
+	"dnscheck/tui"
 )
 
 func main() {

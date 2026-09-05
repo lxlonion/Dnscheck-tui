@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"dnscheck/internal/dnsclient"
+	"dnscheck/dnsclient"
 )
 
 // Column indexes in the page 1 table.

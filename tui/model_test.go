@@ -8,9 +8,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"dnscheck/internal/config"
-	"dnscheck/internal/dnsclient"
-	"dnscheck/internal/geo"
+	"dnscheck/config"
+	"dnscheck/dnsclient"
+	"dnscheck/geo"
 )
 
 func testConfig() *config.Config {

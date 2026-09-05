@@ -12,7 +12,7 @@ import (
 
 	"github.com/miekg/dns"
 
-	"dnscheck/internal/config"
+	"dnscheck/config"
 )
 
 // dohHandler serves RFC 8484 wire-format DNS over the mock behaviors;

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"dnscheck/internal/config"
+	"dnscheck/config"
 )
 
 // ProbeResult aggregates several repeated exchanges against one server.
