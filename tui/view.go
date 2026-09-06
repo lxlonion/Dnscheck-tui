@@ -132,6 +132,8 @@ func (m Model) page1View() string {
 	statusTxt := subtleStyle.Render("已完成")
 	if m.page1Running {
 		statusTxt = yellowStyle.Render("测试中…")
+	} else if m.page1Stopped {
+		statusTxt = yellowStyle.Render("已停止")
 	} else if !m.page1EverRan {
 		statusTxt = subtleStyle.Render("未开始")
 	}
@@ -196,6 +198,8 @@ func (m Model) page1View() string {
 	if len(m.page1Results) == 0 {
 		if m.page1Running {
 			b.WriteString(yellowStyle.Render("正在测试 DNS 服务器…"))
+		} else if m.page1Stopped {
+			b.WriteString(yellowStyle.Render("测试已停止，按 [S] 继续或 [R] 重新触发测试"))
 		} else {
 			b.WriteString(subtleStyle.Render("暂无结果，按 [R] 重新触发测试"))
 		}
@@ -258,6 +262,8 @@ func (m Model) page2View() string {
 	statusTxt := subtleStyle.Render("已完成")
 	if m.page2Running {
 		statusTxt = yellowStyle.Render("测试中…")
+	} else if m.page2Stopped {
+		statusTxt = yellowStyle.Render("已停止")
 	} else if !m.page2EverRan {
 		statusTxt = subtleStyle.Render("未开始")
 	}
@@ -276,6 +282,8 @@ func (m Model) page2View() string {
 	if len(m.page2Results) == 0 {
 		if m.page2Running {
 			b.WriteString(yellowStyle.Render("正在解析域名并查询 IP 地理位置…"))
+		} else if m.page2Stopped {
+			b.WriteString(yellowStyle.Render("测试已停止，按 [S] 继续或 [R] 重新触发测试"))
 		} else {
 			b.WriteString(subtleStyle.Render("暂无结果，按 [R] 重新触发测试"))
 		}
@@ -427,7 +435,9 @@ func renderTable(headers []string, rows [][]string, decorators []func(string) st
 	selected[0].w = nameW
 
 	var sb strings.Builder
-	sb.WriteString(renderRow(headers, selected, nil))
+	// Wrap the whole header row: padding happens inside renderRow, so the
+	// style cannot affect the column width calculation.
+	sb.WriteString(headerCellStyle.Render(renderRow(headers, selected, nil)))
 	sb.WriteString("\n")
 	sepWidth := nameW + fixedOther
 	if totalWidth > 0 && sepWidth > totalWidth {

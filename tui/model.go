@@ -54,12 +54,14 @@ type Model struct {
 
 	run1ID       int
 	page1Running bool
+	page1Stopped bool
 	page1Results []dnsclient.ProbeResult
 	cancel1      context.CancelFunc
 	page1EverRan bool
 
 	run2ID       int
 	page2Running bool
+	page2Stopped bool
 	page2Results []dnsclient.DomainResult
 	page2Geo     map[string]geo.Info
 	cancel2      context.CancelFunc
@@ -72,8 +74,9 @@ type Model struct {
 	selChecked []bool
 	selWarn    string
 
-	// scroll is the body scroll offset (in lines) of the active page;
-	// it is clamped against the rendered content in View.
+	// scroll is the body scroll offset (in lines) of the active page; every
+	// update clamps it against the rendered content, and View clamps again
+	// as a safety net (e.g. right after a terminal resize).
 	scroll int
 
 	geoClient *geo.Client
@@ -112,6 +115,7 @@ func (m Model) startProbe() probeStart {
 	m.run1ID++
 	m.cancel1 = cancel
 	m.page1Running = true
+	m.page1Stopped = false
 	m.page1EverRan = true
 	m.page1Results = nil
 	m.scroll = 0
@@ -137,6 +141,7 @@ func (m Model) startResolve(domains []string) probeStart {
 	m.run2ID++
 	m.cancel2 = cancel
 	m.page2Running = true
+	m.page2Stopped = false
 	m.page2EverRan = true
 	m.page2Results = nil
 	m.page2Geo = nil
@@ -171,14 +176,11 @@ func (m Model) openSelector() Model {
 	return m
 }
 
-// scrollLines moves the active page's body offset by n lines. Only the
-// lower bound is clamped here; the upper bound depends on the rendered
-// content and is clamped in View.
+// scrollLines moves the active page's body offset by n lines, clamped to
+// [0, maxScrollOffset] so the stored offset always matches the rendered
+// content.
 func (m Model) scrollLines(n int) Model {
-	m.scroll += n
-	if m.scroll < 0 {
-		m.scroll = 0
-	}
+	m.scroll = clamp(m.scroll+n, 0, m.maxScrollOffset())
 	return m
 }
 
@@ -188,9 +190,16 @@ func (m Model) visibleHeight() int {
 	return max(1, m.height-viewChrome)
 }
 
-// maxScroll is an offset larger than any possible body height; End sets it
-// and View clamps it to the actual bottom of the content.
-const maxScroll = 1 << 30
+// maxScrollOffset is the largest useful body scroll offset: the number of
+// rendered lines hidden below the fold. The picker renders in full and
+// never scrolls, so it reports 0.
+func (m Model) maxScrollOffset() int {
+	lines, scrollable := m.bodyLines()
+	if !scrollable {
+		return 0
+	}
+	return max(0, len(lines)-m.visibleHeight())
+}
 
 // confirmSelection starts the Page 2 resolve run with the checked domains.
 // Without any selection it keeps the picker open and sets a warning.
@@ -295,7 +304,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scroll = 0
 			return m, nil
 		case "end":
-			m.scroll = maxScroll // View clamps to the actual bottom
+			m.scroll = m.maxScrollOffset()
 			return m, nil
 		case "d", "D":
 			if m.tab == TabGeo && !m.page2Running {
@@ -371,6 +380,7 @@ func (m Model) toggleActive() (tea.Model, tea.Cmd) {
 		if m.page1Running {
 			m.cancel1()
 			m.page1Running = false
+			m.page1Stopped = true
 			m.run1ID++
 			return m, nil
 		}
@@ -380,6 +390,7 @@ func (m Model) toggleActive() (tea.Model, tea.Cmd) {
 	if m.page2Running {
 		m.cancel2()
 		m.page2Running = false
+		m.page2Stopped = true
 		m.run2ID++
 		return m, nil
 	}

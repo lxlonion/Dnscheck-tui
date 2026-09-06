@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"dnscheck/config"
 	"dnscheck/dnsclient"
@@ -608,6 +609,15 @@ func TestSelectorSwallowsTestTriggers(t *testing.T) {
 
 func TestScrollKeysAndMouse(t *testing.T) {
 	m := New(testConfig())
+	// Give the body real overflow: duplicated results render 4 table rows
+	// (9 body lines); height 8 leaves 4 visible lines below the chrome.
+	m.page1Results = append(fakeResults(), fakeResults()...)
+	m.height = 8
+	maxOff := m.maxScrollOffset()
+	if maxOff <= m.visibleHeight() {
+		t.Fatalf("precondition: maxScrollOffset = %d, want more than the %d visible lines",
+			maxOff, m.visibleHeight())
+	}
 
 	m2, _ := m.Update(keyMsg("down"))
 	if got := m2.(Model).scroll; got != 1 {
@@ -640,12 +650,52 @@ func TestScrollKeysAndMouse(t *testing.T) {
 		t.Errorf("pgdown: scroll = %d, want %d", got, m.visibleHeight())
 	}
 	m9, _ := m8.Update(keyMsg("end"))
-	if got := m9.(Model).scroll; got <= 0 {
-		t.Errorf("end: scroll = %d, want a large offset", got)
+	if got := m9.(Model).scroll; got != maxOff {
+		t.Errorf("end: scroll = %d, want the real bottom %d", got, maxOff)
 	}
-	m10, _ := m9.Update(keyMsg("home"))
-	if got := m10.(Model).scroll; got != 0 {
+	m10, _ := m9.Update(keyMsg("down"))
+	if got := m10.(Model).scroll; got != maxOff {
+		t.Errorf("down below bottom must clamp, scroll = %d, want %d", got, maxOff)
+	}
+	m11, _ := m10.Update(keyMsg("home"))
+	if got := m11.(Model).scroll; got != 0 {
 		t.Errorf("home: scroll = %d, want 0", got)
+	}
+}
+
+// Regression: End used to store a huge sentinel offset that only View
+// clamped on its render copy, so every later scroll-up counted down from
+// 2^30, stayed past the real bottom and the pane never moved.
+func TestEndThenScrollUpStillMoves(t *testing.T) {
+	m := New(testConfig())
+	m.page1Results = fakeResults()
+	m.height = 8 // 4 visible lines for a 7-line body, so maxOffset = 3
+
+	m2, _ := m.Update(keyMsg("end"))
+	bottom := m2.(Model)
+	if bottom.scroll != bottom.maxScrollOffset() || bottom.scroll == 0 {
+		t.Fatalf("end: scroll = %d, want the real bottom %d", bottom.scroll, bottom.maxScrollOffset())
+	}
+	if out := stripAnsi(bottom.View()); !strings.Contains(out, "Mock Two") {
+		t.Errorf("end must reveal the bottom row:\n%s", out)
+	}
+
+	m3, _ := bottom.Update(keyMsg("up"))
+	oneUp := m3.(Model)
+	if got := oneUp.scroll; got != bottom.scroll-1 {
+		t.Errorf("up after end: scroll = %d, want %d", got, bottom.scroll-1)
+	}
+	if out := stripAnsi(oneUp.View()); strings.Contains(out, "Mock Two") {
+		t.Errorf("up after end must move the view off the bottom:\n%s", out)
+	}
+
+	m4, _ := oneUp.Update(tea.MouseMsg{Type: tea.MouseWheelUp})
+	if got := m4.(Model).scroll; got != 0 {
+		t.Errorf("wheel up after end: scroll = %d, want 0", got)
+	}
+	m5, _ := m4.Update(keyMsg("pgup"))
+	if got := m5.(Model).scroll; got != 0 {
+		t.Errorf("pgup after end: scroll = %d, want 0", got)
 	}
 }
 
@@ -694,14 +744,20 @@ func TestPickerSwallowsScrollInput(t *testing.T) {
 func TestScrollResetsOnTabSwitchAndNewRun(t *testing.T) {
 	m := New(testConfig())
 	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+	// Overflow Page 1 so "end" produces a non-zero offset to reset from.
+	m.page1Results = fakeResults()
+	m.height = 8
 
 	scrolled, _ := m.Update(keyMsg("end"))
+	if got := scrolled.(Model).scroll; got == 0 {
+		t.Fatal("precondition: end should scroll Page 1 to the bottom")
+	}
 	m2, _ := scrolled.Update(keyMsg("tab"))
 	if got := m2.(Model).scroll; got != 0 {
 		t.Errorf("tab switch must reset scroll, got %d", got)
 	}
 
-	m3, _ := m2.Update(keyMsg("end"))
+	m3, _ := m2.Update(keyMsg("end")) // swallowed by the open picker
 	m4, _ := m3.Update(keyMsg("tab")) // back to Page 1 with results
 	m5, cmd := m4.Update(keyMsg("R"))
 	if cmd == nil {
@@ -711,7 +767,13 @@ func TestScrollResetsOnTabSwitchAndNewRun(t *testing.T) {
 		t.Errorf("new run must reset scroll, got %d", got)
 	}
 
-	m6, _ := m5.Update(keyMsg("end"))
+	// The new run cleared the results; restore them so "end" scrolls again.
+	m5b := m5.(Model)
+	m5b.page1Results = fakeResults()
+	m6, _ := m5b.Update(keyMsg("end"))
+	if got := m6.(Model).scroll; got == 0 {
+		t.Fatal("precondition: end should scroll again after the restart")
+	}
 	m7, _ := m6.Update(keyMsg("2"))
 	mm7 := m7.(Model)
 	if !mm7.selActive {
@@ -1066,5 +1128,137 @@ func TestPauseKeyStopsRunning(t *testing.T) {
 	m4, _ := m3.Update(keyMsg("r"))
 	if !m4.(Model).page1Running {
 		t.Error("R should restart probe")
+	}
+}
+
+func TestViewPage1StoppedState(t *testing.T) {
+	m := New(testConfig())
+	s := m.startProbe()
+	m2, _ := s.model.Update(keyMsg("s"))
+	stopped := m2.(Model)
+	if stopped.page1Running || !stopped.page1Stopped {
+		t.Fatalf("after S: running=%v stopped=%v, want false/true",
+			stopped.page1Running, stopped.page1Stopped)
+	}
+	out := stripAnsi(stopped.View())
+	for _, want := range []string{"已停止", "测试已停止，按 [S] 继续或 [R] 重新触发测试"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stopped Page 1 view missing %q:\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{"已完成", "未开始"} {
+		if strings.Contains(out, banned) {
+			t.Errorf("stopped Page 1 view must not show %q:\n%s", banned, out)
+		}
+	}
+
+	// The placeholder promises that S resumes; it must really restart.
+	m3, cmd := stopped.Update(keyMsg("s"))
+	resumed := m3.(Model)
+	if !resumed.page1Running || resumed.page1Stopped || cmd == nil {
+		t.Errorf("S on a stopped probe should restart it (running=%v stopped=%v cmd=%v)",
+			resumed.page1Running, resumed.page1Stopped, cmd != nil)
+	}
+}
+
+func TestViewPage2StoppedState(t *testing.T) {
+	m := New(testConfig())
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+	s := m.startResolve(m.cfg.Domains)
+	s.model.tab = TabGeo
+	m2, _ := s.model.Update(keyMsg("s"))
+	stopped := m2.(Model)
+	if stopped.page2Running || !stopped.page2Stopped {
+		t.Fatalf("after S: running=%v stopped=%v, want false/true",
+			stopped.page2Running, stopped.page2Stopped)
+	}
+	out := stripAnsi(stopped.View())
+	for _, want := range []string{"已停止", "测试已停止，按 [S] 继续或 [R] 重新触发测试"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stopped Page 2 view missing %q:\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{"已完成", "未开始"} {
+		if strings.Contains(out, banned) {
+			t.Errorf("stopped Page 2 view must not show %q:\n%s", banned, out)
+		}
+	}
+
+	m3, cmd := stopped.Update(keyMsg("s"))
+	resumed := m3.(Model)
+	if !resumed.page2Running || resumed.page2Stopped || cmd == nil {
+		t.Errorf("S on a stopped resolve run should restart it (running=%v stopped=%v cmd=%v)",
+			resumed.page2Running, resumed.page2Stopped, cmd != nil)
+	}
+}
+
+func TestViewCompletedStateNotMisflagged(t *testing.T) {
+	m := New(testConfig())
+	s := m.startProbe()
+	m2, _ := s.model.Update(probeDoneMsg{runID: s.model.run1ID, results: fakeResults()})
+	done1 := m2.(Model)
+	if done1.page1Running || done1.page1Stopped {
+		t.Fatalf("completed Page 1: running=%v stopped=%v, want false/false",
+			done1.page1Running, done1.page1Stopped)
+	}
+	out := stripAnsi(done1.View())
+	if !strings.Contains(out, "已完成") {
+		t.Errorf("completed Page 1 must show 已完成:\n%s", out)
+	}
+	if strings.Contains(out, "已停止") || strings.Contains(out, "未开始") {
+		t.Errorf("completed Page 1 must not look stopped or not-started:\n%s", out)
+	}
+
+	m.geoClient = geo.NewClientWithEndpoint("http://127.0.0.1:1/json/")
+	s2 := m.startResolve(m.cfg.Domains)
+	s2.model.tab = TabGeo
+	results, geoInfos := fakePage2()
+	m3, _ := s2.model.Update(page2DoneMsg{runID: s2.model.run2ID, results: results, geo: geoInfos})
+	done2 := m3.(Model)
+	if done2.page2Running || done2.page2Stopped {
+		t.Fatalf("completed Page 2: running=%v stopped=%v, want false/false",
+			done2.page2Running, done2.page2Stopped)
+	}
+	out2 := stripAnsi(done2.View())
+	if !strings.Contains(out2, "已完成") {
+		t.Errorf("completed Page 2 must show 已完成:\n%s", out2)
+	}
+	if strings.Contains(out2, "已停止") || strings.Contains(out2, "未开始") {
+		t.Errorf("completed Page 2 must not look stopped or not-started:\n%s", out2)
+	}
+}
+
+func TestTableHeaderBoldStyle(t *testing.T) {
+	headers := []string{"服务器", "协议", "RTT #1", "状态"}
+	rows := [][]string{
+		{"Mock One", "UDP", "12.0ms", "NOERROR"},
+		{"Mock Two", "TCP", "40.0ms", "TIMEOUT"},
+	}
+	priority := []int{colProto, colStatus, colRTT1}
+
+	// The default renderer degrades to the Ascii profile without a TTY,
+	// which drops every SGR sequence; force one that keeps bold so the
+	// assertion below is deterministic, then restore it.
+	origProfile := lipgloss.DefaultRenderer().ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI)
+	defer lipgloss.SetColorProfile(origProfile)
+
+	out := renderTable(headers, rows, nil, priority, 0)
+	lines := strings.Split(out, "\n")
+	if !strings.Contains(lines[0], "\x1b[1m") {
+		t.Errorf("table header row must carry the bold SGR sequence, got %q", lines[0])
+	}
+	if body := strings.Join(lines[1:], "\n"); strings.Contains(body, "\x1b[1m") {
+		t.Errorf("data rows must not be wrapped in the bold style: %q", body)
+	}
+
+	// Styling must not change the header text or the column layout: a table
+	// rendered without the bold style strips to exactly the same bytes.
+	origStyle := headerCellStyle
+	headerCellStyle = lipgloss.NewStyle()
+	plain := renderTable(headers, rows, nil, priority, 0)
+	headerCellStyle = origStyle
+	if got, want := stripAnsi(out), stripAnsi(plain); got != want {
+		t.Errorf("bold header changed the table layout:\ngot  %q\nwant %q", got, want)
 	}
 }

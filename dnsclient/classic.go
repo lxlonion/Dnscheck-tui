@@ -31,6 +31,17 @@ func (r *classicResolver) Exchange(ctx context.Context, server config.DNSServer,
 
 	start := time.Now()
 	resp, _, err := c.ExchangeContext(ctx, m, server.Address)
+	if err == nil && r.net == "udp" && resp.Truncated {
+		// A TC=1 UDP answer is incomplete by definition (RFC 1035 4.2.1),
+		// and reporting NOERROR would hide the missing records. Retry the
+		// very same pre-built message over TCP against the same address:
+		// identical ID and flags, and the caller's ctx still bounds the
+		// whole exchange. tcp/tcp-tls transports never truncate.
+		resp, _, err = (&dns.Client{Net: "tcp"}).ExchangeContext(ctx, m, server.Address)
+	}
+	// RTT covers the user-perceived exchange including any TCP fallback; a
+	// failed fallback must surface as TIMEOUT/ERROR, never as an
+	// incomplete "success" carrying the UDP truncation flag.
 	res.RTT = time.Since(start)
 	if err != nil {
 		res.Status, res.Detail = classifyTransportError(ctx, err)

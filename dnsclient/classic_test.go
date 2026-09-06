@@ -3,6 +3,7 @@ package dnsclient
 import (
 	"context"
 	"net"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -27,6 +28,8 @@ type mockDNS struct {
 //	nxdomain.*  -> NXDOMAIN
 //	empty.*     -> NOERROR without answer records
 //	slow.*      -> responds after 400ms
+//	trunc.*     -> TC=1 with no answers over UDP, full A answer over TCP
+//	(transport distinguished via w.RemoteAddr().Network())
 func startMock(t *testing.T, host string) *mockDNS {
 	t.Helper()
 
@@ -53,6 +56,14 @@ func startMock(t *testing.T, host string) *mockDNS {
 				m.SetRcode(r, dns.RcodeServerFailure)
 			} else {
 				m.SetReply(r)
+			}
+		case strings.HasPrefix(name, "trunc."):
+			m.SetReply(r)
+			if w.RemoteAddr().Network() == "udp" {
+				m.Truncated = true
+			} else {
+				hdr := dns.RR_Header{Name: q.Name, Class: dns.ClassINET, Ttl: 60, Rrtype: dns.TypeA}
+				m.Answer = append(m.Answer, &dns.A{Hdr: hdr, A: net.ParseIP("93.184.216.34")})
 			}
 		default:
 			m.SetReply(r)
@@ -84,7 +95,11 @@ func startMock(t *testing.T, host string) *mockDNS {
 	go udpSrv.ActivateAndServe()
 	m.udpAddr = pc.LocalAddr().String()
 
-	lc, err := net.Listen("tcp", hostPort("0"))
+	// Real DNS servers answer UDP and TCP on the same port; binding both
+	// onto one port keeps the TCP fallback for truncated UDP responses
+	// reachable through the server address the client already holds.
+	udpPort := strconv.Itoa(pc.LocalAddr().(*net.UDPAddr).Port)
+	lc, err := net.Listen("tcp", hostPort(udpPort))
 	if err != nil {
 		t.Fatalf("tcp listen: %v", err)
 	}
@@ -118,6 +133,62 @@ func TestExchangeUDPSuccess(t *testing.T) {
 	}
 	if got.Truncated {
 		t.Error("unexpected truncation")
+	}
+}
+
+// A truncated UDP answer must be retried once over TCP with the same
+// message; the result reflects the TCP response, not the truncated UDP one.
+func TestExchangeUDPTruncatedFallsBackToTCP(t *testing.T) {
+	mock := startMock(t, "127.0.0.1")
+	res := classicResolver{net: "udp"}
+	got := res.Exchange(context.Background(), server("mock", mock.udpAddr, config.ProtocolUDP), "trunc.test", dns.TypeA)
+	if got.Status != StatusNOERROR || !got.Success() {
+		t.Fatalf("status = %s, detail = %q", got.Status, got.Detail)
+	}
+	if len(got.IPs) != 1 || got.IPs[0] != "93.184.216.34" {
+		t.Errorf("IPs = %v, want [93.184.216.34] from TCP retry", got.IPs)
+	}
+	if got.Truncated {
+		t.Error("Truncated = true, want truncation bit of the final (TCP) response")
+	}
+	if got.RTT <= 0 {
+		t.Errorf("RTT = %v, want > 0", got.RTT)
+	}
+}
+
+// When the TCP fallback itself fails (nothing listening on TCP), the
+// exchange must report TIMEOUT/ERROR instead of an incomplete NOERROR.
+func TestExchangeUDPTruncatedTCPFallbackFails(t *testing.T) {
+	mux := dns.NewServeMux()
+	mux.HandleFunc("test.", func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		m.Truncated = true
+		w.WriteMsg(m)
+	})
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("udp listen: %v", err)
+	}
+	srv := &dns.Server{PacketConn: pc, Handler: mux}
+	go srv.ActivateAndServe()
+	t.Cleanup(func() { srv.Shutdown() })
+
+	res := classicResolver{net: "udp"}
+	start := time.Now()
+	got := res.Exchange(context.Background(), server("udp-only", pc.LocalAddr().String(), config.ProtocolUDP), "trunc.test", dns.TypeA)
+	elapsed := time.Since(start)
+	if got.Status != StatusTIMEOUT && got.Status != StatusERROR {
+		t.Fatalf("status = %s, want TIMEOUT or ERROR (detail %q)", got.Status, got.Detail)
+	}
+	if got.Success() {
+		t.Error("failed TCP fallback must not be reported as success")
+	}
+	if len(got.IPs) != 0 {
+		t.Errorf("IPs = %v, want none when TCP fallback fails", got.IPs)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("exchange took %v; refused TCP fallback should fail fast", elapsed)
 	}
 }
 
