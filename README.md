@@ -1,4 +1,4 @@
-# Dnscheck
+# Dnscheck-tui
 
 一个跨平台的终端 DNS 诊断工具。它用纯 Go 实现，不依赖 `dig`、`nslookup` 或 `ping`，可在交互式 TUI 中比较多个 DNS 服务器的性能、解析域名，并查看结果 IP 的地理位置与 ISP。
 
@@ -19,10 +19,10 @@
 需要 Go 1.27 或更高版本。
 
 ```bash
-git clone git@github.com:lxlonion/Dnscheck.git
-cd Dnscheck
-go build -o dnscheck ./cmd/dnscheck
-./dnscheck
+git clone git@github.com:lxlonion/Dnscheck-tui.git
+cd Dnscheck-tui
+go build -o dnscheck-tui ./cmd/dnscheck-tui
+./dnscheck-tui
 ```
 
 如果当前目录没有 `config.json`，首次启动时程序会自动创建一份可直接使用的默认配置。
@@ -30,10 +30,10 @@ go build -o dnscheck ./cmd/dnscheck
 使用自定义配置：
 
 ```bash
-./dnscheck -config /path/to/config.json
+./dnscheck-tui -config /path/to/config.json
 ```
 
-也可从项目的 [Releases](https://github.com/lxlonion/Dnscheck/releases) 下载适配平台的预编译版本。
+也可从项目的 [Releases](https://github.com/lxlonion/Dnscheck-tui/releases) 下载适配平台的预编译版本。
 
 ## 使用方式
 
@@ -91,9 +91,9 @@ go vet ./...
 手动交叉编译示例：
 
 ```bash
-GOOS=darwin  GOARCH=arm64 go build -o dnscheck ./cmd/dnscheck
-GOOS=linux   GOARCH=amd64 go build -o dnscheck ./cmd/dnscheck
-GOOS=windows GOARCH=amd64 go build -o dnscheck.exe ./cmd/dnscheck
+GOOS=darwin  GOARCH=arm64 go build -o dnscheck-tui ./cmd/dnscheck-tui
+GOOS=linux   GOARCH=amd64 go build -o dnscheck-tui ./cmd/dnscheck-tui
+GOOS=windows GOARCH=amd64 go build -o dnscheck-tui.exe ./cmd/dnscheck-tui
 ```
 
 推送形如 `v1.0.0` 的 Git 标签会触发 GitHub Actions，为 macOS、Linux 和 Windows 构建可执行文件和校验和，并创建 Release。
@@ -101,7 +101,7 @@ GOOS=windows GOARCH=amd64 go build -o dnscheck.exe ./cmd/dnscheck
 ## 项目结构
 
 ```text
-cmd/dnscheck/  程序入口与命令行参数
+cmd/dnscheck-tui/  程序入口与命令行参数
 config/        JSON 配置、默认值与校验
 dnsclient/     UDP、TCP、DoT、DoH 解析与性能探测
 geo/           IP 地理位置查询、缓存与并发控制
@@ -112,7 +112,7 @@ tui/           Bubble Tea 终端界面、表格与交互
 
 <a id="english"></a>
 
-# Dnscheck
+# Dnscheck-tui
 
 A cross-platform terminal DNS diagnostic tool written in pure Go. It requires no `dig`, `nslookup`, or `ping`, and provides an interactive TUI for comparing DNS server performance, resolving domains, and looking up the location and ISP of returned IP addresses.
 
@@ -131,21 +131,21 @@ A cross-platform terminal DNS diagnostic tool written in pure Go. It requires no
 Go 1.27 or later is required.
 
 ```bash
-git clone git@github.com:lxlonion/Dnscheck.git
-cd Dnscheck
-go build -o dnscheck ./cmd/dnscheck
-./dnscheck
+git clone git@github.com:lxlonion/Dnscheck-tui.git
+cd Dnscheck-tui
+go build -o dnscheck-tui ./cmd/dnscheck-tui
+./dnscheck-tui
 ```
 
-If `config.json` does not exist in the current directory, dnscheck creates a ready-to-use default configuration on first launch.
+If `config.json` does not exist in the current directory, dnscheck-tui creates a ready-to-use default configuration on first launch.
 
 Use another configuration file:
 
 ```bash
-./dnscheck -config /path/to/config.json
+./dnscheck-tui -config /path/to/config.json
 ```
 
-Prebuilt binaries are available from [Releases](https://github.com/lxlonion/Dnscheck/releases).
+Prebuilt binaries are available from [Releases](https://github.com/lxlonion/Dnscheck-tui/releases).
 
 ## Controls
 
@@ -165,7 +165,7 @@ In the domain picker, use `↑` / `↓` to move, `Space` to toggle a domain, `En
 
 ## Configuration
 
-dnscheck reads a JSON file containing the query timeout, DNS servers, and domains:
+dnscheck-tui reads a JSON file containing the query timeout, DNS servers, and domains:
 
 ```json
 {
@@ -203,9 +203,9 @@ go vet ./...
 Example cross-compiles:
 
 ```bash
-GOOS=darwin  GOARCH=arm64 go build -o dnscheck ./cmd/dnscheck
-GOOS=linux   GOARCH=amd64 go build -o dnscheck ./cmd/dnscheck
-GOOS=windows GOARCH=amd64 go build -o dnscheck.exe ./cmd/dnscheck
+GOOS=darwin  GOARCH=arm64 go build -o dnscheck-tui ./cmd/dnscheck-tui
+GOOS=linux   GOARCH=amd64 go build -o dnscheck-tui ./cmd/dnscheck-tui
+GOOS=windows GOARCH=amd64 go build -o dnscheck-tui.exe ./cmd/dnscheck-tui
 ```
 
 Pushing a Git tag such as `v1.0.0` triggers GitHub Actions to build macOS, Linux, and Windows binaries with checksums, then publish a GitHub Release.
@@ -213,7 +213,7 @@ Pushing a Git tag such as `v1.0.0` triggers GitHub Actions to build macOS, Linux
 ## Project layout
 
 ```text
-cmd/dnscheck/  Program entry point and command-line flags
+cmd/dnscheck-tui/  Program entry point and command-line flags
 config/        JSON configuration, defaults, and validation
 dnsclient/     UDP, TCP, DoT, DoH resolution and performance probing
 geo/           IP geolocation client, cache, and concurrency control

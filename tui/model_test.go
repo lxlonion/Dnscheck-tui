@@ -9,9 +9,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
-	"dnscheck/config"
-	"dnscheck/dnsclient"
-	"dnscheck/geo"
+	"github.com/lxlonion/Dnscheck-tui/config"
+	"github.com/lxlonion/Dnscheck-tui/dnsclient"
+	"github.com/lxlonion/Dnscheck-tui/geo"
 )
 
 func testConfig() *config.Config {

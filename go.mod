@@ -1,4 +1,4 @@
-module dnscheck
+module github.com/lxlonion/Dnscheck-tui
 
 go 1.27.0
 

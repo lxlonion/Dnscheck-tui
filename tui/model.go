@@ -7,9 +7,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"dnscheck/config"
-	"dnscheck/dnsclient"
-	"dnscheck/geo"
+	"github.com/lxlonion/Dnscheck-tui/config"
+	"github.com/lxlonion/Dnscheck-tui/dnsclient"
+	"github.com/lxlonion/Dnscheck-tui/geo"
 )
 
 const (

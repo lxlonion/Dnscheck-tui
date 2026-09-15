@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"dnscheck/config"
+	"github.com/lxlonion/Dnscheck-tui/config"
 )
 
 func TestResolveServerAAndAAAA(t *testing.T) {

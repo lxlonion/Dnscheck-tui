@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"dnscheck/config"
+	"github.com/lxlonion/Dnscheck-tui/config"
 )
 
 // ResolveResult is the outcome of resolving one domain through one DNS

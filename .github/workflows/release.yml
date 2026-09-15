@@ -30,17 +30,17 @@ jobs:
             GOARCH="${target##*/}"
             ext=""
             if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-            out="dist/dnscheck_${VERSION}_${GOOS}_${GOARCH}${ext}"
+            out="dist/dnscheck-tui_${VERSION}_${GOOS}_${GOARCH}${ext}"
             echo "Building ${out}"
             CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-              go build -trimpath -ldflags="-s -w" -o "$out" ./cmd/dnscheck
+              go build -trimpath -ldflags="-s -w" -o "$out" ./cmd/dnscheck-tui
           done
-          (cd dist && sha256sum dnscheck_* > checksums.txt)
+          (cd dist && sha256sum dnscheck-tui_* > checksums.txt)
 
       - name: Publish GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${GITHUB_REF_NAME}" dist/* \
-            --title "dnscheck ${GITHUB_REF_NAME}" \
+            --title "dnscheck-tui ${GITHUB_REF_NAME}" \
             --generate-notes

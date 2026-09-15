@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"dnscheck/config"
+	"github.com/lxlonion/Dnscheck-tui/config"
 )
 
 // ProbeResult aggregates several repeated exchanges against one server.

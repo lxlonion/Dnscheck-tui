@@ -1,5 +1,5 @@
 // Package config loads and validates the JSON configuration file that
-// drives dnscheck: DNS servers under test, target domains and the global
+// drives dnscheck-tui: DNS servers under test, target domains and the global
 // per-query timeout.
 package config
 

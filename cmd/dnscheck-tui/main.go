@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"dnscheck/config"
-	"dnscheck/tui"
+	"github.com/lxlonion/Dnscheck-tui/config"
+	"github.com/lxlonion/Dnscheck-tui/tui"
 )
 
 func main() {
@@ -17,12 +17,12 @@ func main() {
 
 	cfg, err := config.LoadOrCreate(*cfgPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "dnscheck:", err)
+		fmt.Fprintln(os.Stderr, "dnscheck-tui:", err)
 		os.Exit(1)
 	}
 
 	if _, err := tea.NewProgram(tui.New(cfg), tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "dnscheck:", err)
+		fmt.Fprintln(os.Stderr, "dnscheck-tui:", err)
 		os.Exit(1)
 	}
 }

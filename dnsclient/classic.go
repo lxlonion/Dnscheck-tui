@@ -9,7 +9,7 @@ import (
 
 	"github.com/miekg/dns"
 
-	"dnscheck/config"
+	"github.com/lxlonion/Dnscheck-tui/config"
 )
 
 // classicResolver exchanges DNS messages over plain UDP, plain TCP or
